@@ -1,0 +1,26 @@
+name: Run Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install Neovim
+        run: |
+          sudo apt update
+          sudo apt install -y neovim
+
+      #- name: Install luarocks + dependencies
+      #  run: |
+      #    sudo apt install -y luarocks
+      #    luarocks install luabitop || true
+
+      - name: Run tests
+        run: make test

@@ -1,0 +1,721 @@
+local M = {}
+local config = require("loop.config")
+local Page = require('loop.ui.Page')
+local throttle = require('loop.tools.throttle')
+local uitools = require('loop.tools.uitools')
+local jsontools = require('loop.tools.json')
+local selector = require("loop.tools.selector")
+local notifications = require("loop.notifications")
+
+---@class loop.TabInfo
+---@field label string
+---@field pages loop.pages.Page[]
+---@field active_page_idx number|nil
+---@field changed_pages table<number,boolean>
+
+---@type boolean
+local _init_done = false
+local _init_err_msg = "init() not called"
+
+---@type number
+local _loop_win = -1
+local _original_spell
+local _original_winbar
+
+---@type number
+local _loop_win_height_ratio
+---@type fun(action: "next"|"prev")
+local _cycle_pages
+
+---@type loop.TabInfo[]
+local _tabs_arr = {}
+
+---@type number
+local _active_tab_idx = 1
+
+---@type loop.PageManagerFactory
+local _page_manger_factory
+
+---@type loop.pages.Page
+local _placeholder_page
+
+---@return number
+local function _get_placeholder_buf()
+    _placeholder_page = _placeholder_page or Page:new("empty", "")
+    local buf = _placeholder_page:get_or_create_buf()
+    return buf
+end
+local function _setup_tabs()
+    if _loop_win == -1 then
+        return
+    end
+
+    local active_tab = _tabs_arr[_active_tab_idx]
+    local page_idx = active_tab and active_tab.active_page_idx or 1
+    local symbols = config.current.window.symbols
+    -- update window if visible
+    local win = _loop_win
+    local winbar_parts = { "%#LoopPluginInactiveTab#" }
+    local tabidx = 0
+    local page_assigned = false
+    for arr_idx, tab in ipairs(_tabs_arr) do
+        local is_active_tab = false
+        if active_tab == tab then
+            _active_tab_idx = arr_idx
+            is_active_tab = true
+            local page = tab.pages[page_idx]
+            if page then
+                local buf = page:get_or_create_buf()
+                vim.wo[win].winfixbuf = false
+                vim.api.nvim_win_set_buf(win, buf)
+                vim.wo[win].winfixbuf = true
+                page_assigned = true
+            end
+        end
+        if #tab.pages > 0 then
+            tabidx = tabidx + 1
+            table.insert(winbar_parts, ' ')
+            if is_active_tab then table.insert(winbar_parts, "%#LoopPluginActiveTab#") end
+            local uiflags1 = ''
+            if #tab.pages == 1 then
+                if is_active_tab then tab.changed_pages[1] = nil end
+                local change_flag = tab.changed_pages[1] and symbols.change or ''
+                uiflags1 = (change_flag or "") .. (tab.pages[1]:get_ui_flags() or "")
+                uiflags1 = uiflags1 ~= "" and (' ' .. uiflags1) or uiflags1
+            end
+            local str1 = ("[%s%s]"):format(tab.label, uiflags1)
+            table.insert(winbar_parts, string.format("%%%d@v:lua.LoopWorkspace._winbar_click@%s%%T", arr_idx * 1000, str1))
+            if is_active_tab then table.insert(winbar_parts, "%#LoopPluginInactiveTab#") end
+        end
+        if #tab.pages > 1 then
+            for idx, page in ipairs(tab.pages) do
+                local active_page = is_active_tab and idx == page_idx
+                if active_page then tab.changed_pages[idx] = nil end
+                local change_flag = tab.changed_pages[idx] and symbols.change or ''
+                local uiflags2 = (change_flag or "") .. (page:get_ui_flags() or "")
+                uiflags2 = uiflags2 ~= "" and (' ' .. uiflags2) or uiflags2
+                local str2 = ("[%d%s]"):format(idx, uiflags2)
+                if active_page then table.insert(winbar_parts, "%#LoopPluginActiveTab#") end
+                table.insert(winbar_parts,
+                    string.format("%%%d@v:lua.LoopWorkspace._winbar_click@%s%%T", arr_idx * 1000 + idx, str2))
+                if active_page then table.insert(winbar_parts, "%#LoopPluginInactiveTab#") end
+            end
+        end
+    end
+
+    if not page_assigned then
+        local buf = _get_placeholder_buf()
+        vim.wo[win].winfixbuf = false
+        vim.api.nvim_win_set_buf(win, buf)
+        vim.wo[win].winfixbuf = true
+    end
+
+    -- add right aligned current page/buffer info
+    --if #_active_tab.pages > 0 then
+    --    local name = _active_tab.pages[_active_tab.active_page_idx or 1]:get_name() or _active_tab.label
+    --    table.insert(winbar_parts, "%=" .. name)
+    --end
+    -- set the winbar
+    vim.wo[win].winbar = table.concat(winbar_parts, '')
+end
+
+local _throttled_setup_tabs = throttle.throttle_wrap(100, _setup_tabs)
+
+---@param req_tabidx number
+---@param req_pageidx number|nil
+local function _set_active_tab(req_tabidx, req_pageidx)
+    local req_tab = _tabs_arr[req_tabidx]
+    assert(req_tab)
+    if not req_tab or #req_tab.pages == 0 then
+        return
+    end
+    _active_tab_idx = req_tabidx
+    if req_pageidx and req_pageidx > 0 and req_pageidx <= #req_tab.pages then
+        req_tab.active_page_idx = req_pageidx
+    end
+    _setup_tabs()
+end
+
+---@param action "next"|"prev"
+_cycle_pages = function(action)
+    if vim.api.nvim_get_current_win() ~= _loop_win then return end
+
+    local tabidx = _active_tab_idx
+    local tab = _tabs_arr[tabidx]
+    local pageidx = tab.active_page_idx or 1
+
+    local dir = action == "next" and 1 or -1
+
+    if (#tab.pages > 0) then
+        pageidx = pageidx + dir
+    end
+
+    -- if page goes out of bounds, move to next/prev tab with pages
+    if pageidx < 1 or pageidx > #tab.pages then
+        local start_idx = tabidx
+        repeat
+            tabidx = (tabidx - 1 + dir) % #_tabs_arr + 1
+            tab = _tabs_arr[tabidx]
+        until (tab.pages and #tab.pages > 0) or (tabidx == start_idx)
+        pageidx = dir == 1 and 1 or #tab.pages
+    end
+
+    _set_active_tab(tabidx, pageidx)
+end
+
+---@return table<string,loop.KeyMap>
+local function get_page_keymap()
+    --- set keymaps
+    ---@type table<string,loop.KeyMap>
+    local keymaps = {
+        ["<c-p>"] = {
+            callback = function()
+                if vim.api.nvim_get_current_win() == _loop_win then
+                    _cycle_pages("prev")
+                end
+            end,
+            desc = "Move to next page",
+        },
+        ["<c-n>"] = {
+            callback = function()
+                if vim.api.nvim_get_current_win() == _loop_win then
+                    _cycle_pages("next")
+                end
+            end,
+            desc = "Move to previous page",
+        },
+    }
+    return keymaps
+end
+
+---@param tab loop.TabInfo
+local function _delete_tab_pages(tab)
+    local cur_buf = nil
+    if _loop_win ~= -1 then
+        cur_buf = vim.api.nvim_win_get_buf(_loop_win)
+    end
+    for _, page in ipairs(tab.pages) do
+        if cur_buf and page:get_buf() == cur_buf then
+            local buf = _get_placeholder_buf()
+            vim.wo[_loop_win].winfixbuf = false
+            vim.api.nvim_win_set_buf(_loop_win, buf)
+            vim.wo[_loop_win].winfixbuf = true
+        end
+        page:destroy()
+    end
+    tab.pages = {}
+    tab.active_page_idx = nil
+end
+
+---@param tab loop.TabInfo
+local function _get_tab_index(tab)
+    for idx, t in ipairs(_tabs_arr) do
+        if t == tab then return idx end
+    end
+    return 0
+end
+
+---@param tab loop.TabInfo
+---@param page loop.pages.Page
+local function _get_page_index(tab, page)
+    for idx, p in ipairs(tab.pages) do
+        if p == page then return idx end
+    end
+    return 0
+end
+
+---@param tab loop.TabInfo
+local function _delete_tab(tab)
+    local index = _get_tab_index(tab)
+    assert(index > 0)
+    _delete_tab_pages(tab)
+    table.remove(_tabs_arr, index)
+    vim.schedule(_setup_tabs)
+end
+
+---@param tab loop.TabInfo
+---@param page loop.pages.Page
+---@param activate boolean|nil
+---@return number idx
+local function _add_tab_page(tab, page, activate)
+    page:add_keymaps(get_page_keymap())
+    table.insert(tab.pages, page)
+    local page_idx = #tab.pages
+    if activate then
+        _active_tab_idx = _get_tab_index(tab)
+        tab.active_page_idx = page_idx
+    end
+    page:add_tracker({
+        on_change = function()
+            if tab.changed_pages[page_idx] ~= true then
+                tab.changed_pages[page_idx] = true
+                _throttled_setup_tabs()
+            end
+        end,
+        on_ui_flags_update = _throttled_setup_tabs
+    })
+    vim.schedule(function ()
+        if activate then
+            M.show_window()
+        end
+        _setup_tabs()
+    end)
+    return page_idx
+end
+
+function M.winbar_click(id, clicks, button, mods)
+    local tab_idx = math.floor(id / 1000)
+    local page_idx = id % 1000
+
+    if _active_tab_idx ~= tab_idx then
+        _set_active_tab(tab_idx, nil)
+    else
+        local tab = _tabs_arr[tab_idx]
+        if tab and page_idx and page_idx > 0 then
+            _set_active_tab(tab_idx, page_idx)
+        end
+    end
+end
+
+local function _create_window()
+    if _loop_win ~= -1 then
+        return
+    end
+
+    local prev_win = vim.api.nvim_get_current_win()
+    -- Open a bottom split.
+    vim.cmd('bot split')
+
+    -- Get the new window ID.
+    _loop_win = vim.api.nvim_get_current_win()
+
+    vim.wo[_loop_win].winfixbuf = true
+    if _loop_win_height_ratio then
+        vim.api.nvim_win_set_height(_loop_win, math.floor(vim.o.lines * _loop_win_height_ratio))
+    else
+        vim.api.nvim_win_set_height(_loop_win, math.floor(vim.o.lines * 0.17))
+    end
+
+    vim.api.nvim_set_option_value('winfixheight', true, { scope = 'local', win = _loop_win })
+    vim.api.nvim_set_current_win(prev_win)
+    _original_winbar = vim.wo[_loop_win].winbar
+    _original_spell = vim.wo[_loop_win].spell
+    vim.wo[_loop_win].spell = false
+
+    _setup_tabs()
+
+    vim.api.nvim_create_autocmd("WinResized", {
+        callback = function()
+            if _loop_win ~= -1 then
+                local height = vim.api.nvim_win_get_height(_loop_win)
+                local ratio = height / vim.o.lines
+                -- only save of we are not the only window vertically
+                if ratio < 0.7 then
+                    _loop_win_height_ratio = ratio
+                end
+            end
+        end,
+    })
+end
+
+-- remove winbar after split
+local function _check_winbar()
+    local winid = vim.api.nvim_get_current_win()
+    local buf = vim.api.nvim_win_get_buf(winid)
+    if winid ~= _loop_win and Page.is_page(buf) then
+        local winbar = vim.wo[winid].winbar
+        if type(winbar) == 'string' and winbar:match('v:lua.LoopWorkspace._winbar_click') then
+            vim.wo[winid].winbar = nil
+        end
+    end
+end
+
+---@param target_winid? number|nil
+---@param tabidx number
+---@param pageidx number|nil
+local function _show_page(target_winid, tabidx, pageidx)
+    if not target_winid or target_winid == _loop_win then
+        _set_active_tab(tabidx, pageidx)
+        _create_window()
+    else
+        local req_tab = _tabs_arr[tabidx]
+        local page_idx = pageidx or 1
+        if req_tab and req_tab.pages[page_idx] then
+            local buf = req_tab.pages[page_idx]:get_or_create_buf()
+            if buf and buf > 0 then
+                vim.api.nvim_win_set_buf(target_winid, buf)
+            end
+        end
+    end
+end
+
+---@param target_winid? number|nil
+local function _select_and_show_page(target_winid)
+    local choices = {}
+    for tabidx, tab in ipairs(_tabs_arr) do
+        for pageidx, page in ipairs(tab.pages) do
+            local label = tab.label
+            if #tab.pages > 1 then
+                label = label .. ' - ' .. page:get_name()
+            end
+            ---@type loop.SelectorItem
+            local item = {
+                label = label,
+                data = { tabidx = tabidx, pageidx = pageidx },
+            }
+            table.insert(choices, item)
+        end
+    end
+    if #choices == 0 then
+        notifications.notify("No pages to show")
+        return
+    end
+    selector.select("Select page", choices, nil, function(data)
+        if data and data.tabidx then
+            _show_page(target_winid, data.tabidx, data.pageidx)
+        end
+    end)
+end
+
+function M.show_window()
+    assert(_init_done, _init_err_msg)
+    _create_window()
+end
+
+function M.hide_window()
+    assert(_init_done, _init_err_msg)
+    if _loop_win and vim.api.nvim_win_is_valid(_loop_win) then
+        vim.api.nvim_win_close(_loop_win, false)
+        _loop_win = -1
+    end
+end
+
+---@return boolean
+function M.toggle_window()
+    assert(_init_done, _init_err_msg)
+    if _loop_win ~= -1 then
+        M.hide_window()
+        return false
+    else
+        M.show_window()
+        return true
+    end
+end
+
+function M.switch_page()
+    assert(_init_done, _init_err_msg)
+    _select_and_show_page()
+end
+
+---@param target_winid number
+---@param group_label string|nil
+---@param page_label string|nil
+function M.open_page(target_winid, group_label, page_label)
+    assert(_init_done, _init_err_msg)
+    if not group_label then
+        _select_and_show_page(target_winid)
+        return
+    end
+    local tab_idx
+    for ti, t in ipairs(_tabs_arr) do
+        if group_label == t.label then
+            tab_idx = ti
+            break
+        end
+    end
+    if not tab_idx then
+        notifications.notify('Page not found: ' .. tostring(group_label))
+        return
+    end
+    if not page_label then
+        _show_page(target_winid, tab_idx, nil)
+        return
+    end
+    local tab = _tabs_arr[tab_idx]
+    if not tab then return end
+
+    local page_idx
+    for pi, p in ipairs(tab.pages) do
+        if page_label == p:get_name() then
+            page_idx = pi
+            break
+        end
+    end
+    if not page_idx then
+        notifications.notify('Page not found: ' .. tostring(group_label) .. ' - ' .. page_label)
+        return
+    end
+    _show_page(target_winid, tab_idx, page_idx)
+end
+
+---@return string[]
+function M.get_pagegroup_names()
+    local ret = {}
+    for _, t in ipairs(_tabs_arr) do
+        table.insert(ret, t.label)
+    end
+    return ret
+end
+
+---@param group_label string
+---@return string[]
+function M.get_page_names(group_label)
+    local tab_idx
+    for ti, t in ipairs(_tabs_arr) do
+        if group_label == t.label then
+            if #t.pages == 1 then
+                return {}
+            end
+            return vim.tbl_map(function(p)
+                return p:get_name()
+            end, t.pages)
+        end
+    end
+    return {}
+end
+
+---@param tab loop.TabInfo
+---@param args loop.tools.TermProc.StartArgs
+---@param activate boolean|nil
+---@return loop.tools.TermProc|nil,string|nil
+local function _add_term_page(tab, args, activate)
+    -- Create and register the page
+    local page = Page:new("term", args.name)
+    _add_tab_page(tab, page, activate)
+
+    -- fake render to force change notifications
+    page:set_renderer({
+        render = function(bufnr, user_data) return true end
+    })
+
+    _create_window()
+    assert(_loop_win ~= -1)
+
+    ---@type loop.tools.TermProc.StartArgs
+    ---@diagnostic disable-next-line: missing-fields
+    local args_cpy = {}
+    for k, v in pairs(args) do args_cpy[k] = v end
+
+    args_cpy.on_exit_handler = function(code)
+        args.on_exit_handler(code)
+        local symbols = config.current.window.symbols
+        page:set_ui_flags(code == 0 and symbols.success or symbols.failure)
+        local buf = page:get_buf()
+        if buf ~= -1 then
+            vim.api.nvim_buf_call(buf, function() vim.cmd("stopinsert") end)
+            uitools.disable_insert_mappings(buf)
+        end
+    end
+
+    args_cpy.output_handler = function(stream, data)
+        if args.output_handler then
+            args.output_handler(stream, data)
+        end
+        page:render() -- fake render to force change notifications
+    end
+
+    local prev_win = vim.api.nvim_get_current_win()
+    local prev_buf = vim.api.nvim_win_get_buf(prev_win)
+    local was_in_insert = vim.fn.mode():sub(1, 1) == 'i'
+    if was_in_insert then
+        vim.cmd.stopinsert()
+    end
+
+    vim.api.nvim_set_current_win(_loop_win)
+
+    local bufnr = page:get_or_create_buf()
+
+    vim.wo[_loop_win].winfixbuf = false
+    vim.api.nvim_win_set_buf(_loop_win, bufnr)
+    vim.wo[_loop_win].winfixbuf = true
+
+    local TermProc = require('loop.tools.TermProc')
+    local proc = TermProc:new()
+    local proc_ok, proc_err = proc:start(args_cpy)
+
+    vim.keymap.set('t', '<Esc>', function() vim.cmd('stopinsert') end, { buffer = bufnr })
+    vim.api.nvim_win_set_cursor(_loop_win, { vim.api.nvim_buf_line_count(bufnr), 0 })
+
+    vim.api.nvim_set_current_win(prev_win)
+    if prev_win ~= _loop_win then
+        vim.api.nvim_set_current_buf(prev_buf)
+    else
+        vim.wo[_loop_win].winfixbuf = false
+        vim.api.nvim_win_set_buf(_loop_win, prev_buf)
+        vim.wo[_loop_win].winfixbuf = true
+    end
+
+    if was_in_insert then
+        vim.cmd.startinsert()
+    end
+
+    if not proc_ok then
+        return nil, proc_err
+    end
+    return proc, nil
+end
+
+---@param label string
+---@return loop.TabInfo
+local function _add_tab(label)
+    ---@type loop.TabInfo
+    local tab = {
+        label = label,
+        pages = {},
+        changed_pages = {},
+    }
+    table.insert(_tabs_arr, tab)
+    return tab
+end
+
+---@return loop.PageManager
+function _create_page_manager()
+    assert(_init_done, "init not done")
+
+    local is_expired = false
+    local page_manager_expired_err = "page manager expired"
+
+    ---@param tab loop.TabInfo
+    ---@return loop.PageGroup
+    local function make_page_group(tab)
+        ---@type table<number,loop.pages.Page>
+        local by_id = {}
+        ---@type loop.PageGroup
+        return {
+            expired = function() return is_expired end,
+            add_page = function(id, label, activate)
+                assert(not is_expired, page_manager_expired_err)
+                assert(not by_id[id], "page already exists in group")
+                local page = Page:new("page", label)
+                by_id[id] = page
+                _add_tab_page(tab, page, activate)
+                return page:make_controller()
+            end,
+            add_term_page = function(id, args, activate)
+                assert(not is_expired, page_manager_expired_err)
+                return _add_term_page(tab, args, activate)
+            end,
+            get_page_controller = function(id)
+                if is_expired then return nil end
+                local page = by_id[id]
+                return page and page:get_user_data() or nil
+            end,
+            activate_page = function(id)
+                _set_active_tab(_get_tab_index(tab), _get_page_index(tab, by_id[id]))
+            end,
+            delete_pages = function()
+                assert(not is_expired, page_manager_expired_err)
+                _delete_tab_pages(tab)
+            end,
+        }
+    end
+
+    ---@class loop.window.GroupInfo
+    ---@field group loop.PageGroup
+    ---@field tab loop.TabInfo
+
+    ---@type table<string, loop.window.GroupInfo>
+    local groups = {}
+
+    ---@type loop.PageManager
+    return {
+        expired = function() return is_expired end,
+        get_page_controller = function(group_id, page_id)
+            if is_expired then return nil end
+            local group = groups[group_id]
+            return group and group.group.get_page_controller(page_id) or nil
+        end,
+        add_page_group = function(id, label)
+            assert(not is_expired, page_manager_expired_err)
+            assert(not groups[id], "page group already exists")
+            local tab = _add_tab(label)
+            local group = make_page_group(tab)
+            groups[id] = { group = group, tab = tab }
+            return group
+        end,
+        get_page_group = function(id)
+            if is_expired then return nil end
+            local data = groups[id]
+            return data and data.group or nil
+        end,
+        delete_page_group = function(id)
+            assert(not is_expired, page_manager_expired_err)
+            local group = groups[id]
+            if group then _delete_tab(group.tab) end
+        end,
+        delete_all_groups = function(expire)
+            assert(not is_expired, page_manager_expired_err)
+            for _, grp in pairs(groups) do
+                _delete_tab(grp.tab)
+            end
+            if expire then is_expired = true end
+        end
+    }
+end
+
+function M.page_manger_factory()
+    if not _page_manger_factory then
+        _page_manger_factory = function()
+            return _create_page_manager()
+        end
+    end
+    return _page_manger_factory
+end
+
+---@param config_dir string
+function M.save_settings(config_dir)
+    local window_config = { height = _loop_win_height_ratio }
+    jsontools.save_to_file(vim.fs.joinpath(config_dir, "window.json"), window_config)
+end
+
+---@param config_dir string
+function M.load_settings(config_dir)
+    local loaded, conf = jsontools.load_from_file(vim.fs.joinpath(config_dir, "window.json"))
+    if loaded then
+        _loop_win_height_ratio = conf.height
+    end
+end
+
+function M.init()
+    if _init_done then
+        error('Loop.nvim: init() cannot be called more than once')
+        return
+    end
+    -- init only once
+    _init_done = true
+
+    do
+        vim.api.nvim_set_hl(0, "LoopPluginInactiveTab", { link = "WinBar" })
+        vim.api.nvim_set_hl(0, "LoopPluginActiveTab", { link = "Special" })
+        vim.api.nvim_set_hl(0, "LoopPluginEventWarn", { link = "WarningMsg" })
+        vim.api.nvim_set_hl(0, "LoopPluginEventsError", { link = "ErrorMsg" })
+    end
+
+    vim.api.nvim_create_autocmd("WinClosed", {
+        callback = function(args)
+            local closed_winid = tonumber(args.match)
+            if closed_winid == _loop_win then
+                _loop_win = -1
+            end
+        end,
+    })
+
+    vim.api.nvim_create_autocmd("WinEnter", { callback = _check_winbar })
+
+    vim.api.nvim_create_autocmd("BufEnter", {
+        callback = function()
+            local win = vim.api.nvim_get_current_win()
+            if win == _loop_win then
+                local buf = vim.api.nvim_win_get_buf(win)
+                if not Page.is_page(buf) then
+                    vim.wo[_loop_win].winbar = _original_winbar
+                    vim.wo[_loop_win].spell = _original_spell
+                end
+            else
+                _check_winbar()
+            end
+        end,
+    })
+end
+
+return M
