@@ -5,10 +5,13 @@ local taskmgr = require("loop.task.taskmgr")
 ---@class loop.TaskPlan
 ---@field tasks loop.Task[]
 ---@field root string
----@field dry_run boolean
----@field dry_run_report string[]|nil
 ---@field page_manager_fact loop.PageManagerFactory
----@field on_exit fun(success:boolean, reason?:string,dry_run_report?:string[]|nil)
+---@field on_exit fun(success:boolean, reason?:string)
+
+---@class loop.TaskTreeNode
+---@field name string                       -- Task name
+---@field order "sequence"|"parallel"       -- Dependency execution order
+---@field deps loop.TaskTreeNode[]           -- Child dependency nodes
 
 ---@class loop.TaskScheduler
 ---@field new fun(self:loop.TaskScheduler):loop.TaskScheduler
@@ -17,12 +20,48 @@ local taskmgr = require("loop.task.taskmgr")
 ---@field _page_manager loop.PageManager[]
 local TaskScheduler = class()
 
---- Create a new TaskScheduler
-function TaskScheduler:init()
-    self._scheduler = nil
-    self._pending_plan = nil
-    self._page_managers = {}
+
+---@param task_name string
+---@param name_to_task table<string, loop.Task>
+---@param visiting table<string, boolean>
+---@param visited table<string, boolean>
+---@return loop.TaskTreeNode? node, string? error
+local function build_task_tree(task_name, name_to_task, visiting, visited)
+    -- True cycle (back-edge)
+    if visiting[task_name] then
+        return nil, "Cycle detected at task: " .. task_name
+    end
+    local task = name_to_task[task_name]
+    if not task then
+        return nil, "Unknown task: " .. task_name
+    end
+    -- Option B: already expanded elsewhere → return leaf
+    if visited[task_name] then
+        return {
+            name = task.name,
+            order = task.depends_order or "sequence",
+            deps = {}, -- no re-expansion
+        }, nil
+    end
+    visiting[task_name] = true
+    local deps = {}
+    for _, dep_name in ipairs(task.depends_on or {}) do
+        local dep_node, err =
+            build_task_tree(dep_name, name_to_task, visiting, visited)
+        if err then
+            return nil, err
+        end
+        table.insert(deps, dep_node)
+    end
+    visiting[task_name] = nil
+    visited[task_name] = true
+    return {
+        name = task.name,
+        order = task.depends_order or "sequence",
+        deps = deps,
+    }, nil
 end
+
 
 ---@param plan loop.TaskPlan
 ---@return table<string, loop.Task>? name_to_task
@@ -51,6 +90,35 @@ local function validate_and_build_nodes(plan)
     return name_to_task, nodes, nil
 end
 
+--- Create a new TaskScheduler
+function TaskScheduler:init()
+    self._scheduler = nil
+    self._pending_plan = nil
+    self._page_managers = {}
+end
+
+---@param tasks loop.Task[]
+---@param root string
+---@return loop.TaskTreeNode|nil task_tree
+---@return loop.Task[]? used_tasks
+---@return string? error_msg
+function TaskScheduler:generate_task_plan(tasks, root)
+    local name_to_task = {}
+    for _, t in ipairs(tasks) do
+        if name_to_task[t.name] then
+            return nil, nil, "Duplicate task: " .. t.name
+        end
+        name_to_task[t.name] = t
+    end
+    local visited = {}
+    local visiting = {}
+    local tree, err = build_task_tree(root, name_to_task, visiting, visited)
+    if err then return nil, nil, err end
+
+    local used_tasks = vim.tbl_map(function(name) return name_to_task[name] end, vim.tbl_keys(visited))
+    return tree, used_tasks, nil
+end
+
 ---@param plan loop.TaskPlan
 function TaskScheduler:_run_plan(plan)
     local name_to_task, nodes, err = validate_and_build_nodes(plan)
@@ -62,13 +130,6 @@ function TaskScheduler:_run_plan(plan)
     ---@type loop.scheduler.StartNodeFn
     local function start_node(id, on_node_exit)
         local task = name_to_task[id] --[[@as loop.Task]]
-
-        if plan.dry_run then
-            plan.dry_run_report = plan.dry_run_report or {}
-            table.insert(plan.dry_run_report, task.name)
-            on_node_exit(true)
-            return { terminate = function() end }
-        end
 
         local provider = taskmgr.get_provider(task.type)
         if not provider then
@@ -96,7 +157,13 @@ function TaskScheduler:_run_plan(plan)
 
     local final_cb = vim.schedule_wrap(plan.on_exit)
 
-    scheduler:start(plan.root, function(success, trigger, param)
+    ---@type loop.scheduler.NodeEventFn
+    local function on_node_event(id, event)
+        vim.notify(event .. " --> " .. id)
+    end
+    
+    ---@type loop.scheduler.exit_fn
+    local on_plan_end = function(success, trigger, param)
         local reason
         if trigger == "cycle" then
             reason = "Task dependency loop detected in task: " .. tostring(param)
@@ -108,7 +175,7 @@ function TaskScheduler:_run_plan(plan)
             reason = param or "Task failed"
         end
 
-        final_cb(success, reason, plan.dry_run_report)
+        final_cb(success, reason)
 
         if self._pending_plan then
             self:_start_current_plan()
@@ -117,7 +184,9 @@ function TaskScheduler:_run_plan(plan)
         if self._scheduler == scheduler then
             self._scheduler = nil
         end
-    end)
+    end
+
+    scheduler:start(plan.root, on_node_event, on_plan_end)
 
     self._scheduler = scheduler
 end
@@ -131,17 +200,14 @@ function TaskScheduler:_start_current_plan()
         pm.delete_all_groups(true)
     end
     self._page_managers = {}
-    -- Normalize
-    plan.dry_run = plan.dry_run == true
     -- Run plan
     self:_run_plan(plan)
 end
 
 ---@param tasks loop.Task[]
 ---@param root string
----@param dry_run? boolean
 ---@param page_manager_fact loop.PageManagerFactory
----@param on_exit? fun(success:boolean, reason?:string,dry_run_report?:string[]|nil)
+---@param on_exit? fun(success:boolean, reason?:string)
 function TaskScheduler:start(tasks, root, dry_run, page_manager_fact, on_exit)
     on_exit = on_exit or function(success, reason) end
     dry_run = dry_run == true

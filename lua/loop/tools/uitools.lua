@@ -147,7 +147,7 @@ function M.smart_open_buffer(bufnr)
     return winid
 end
 
----@param winnr number
+---@param winid number
 ---@param text string
 function M.move_to_first_occurence(winid, text)
     local bufnr = vim.api.nvim_win_get_buf(winid)

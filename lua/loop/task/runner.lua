@@ -8,50 +8,30 @@ local TaskScheduler = require("loop.task.TaskScheduler")
 ---@type loop.TaskScheduler
 local _scheduler    = TaskScheduler:new()
 
---- Filter tasks to only those reachable from the root (i.e., will actually run)
----@param all_tasks loop.Task[]
----@param used_names string[]
----@return loop.Task[]
-local function filter_used_tasks(all_tasks, used_names)
-    local name_set = {}
-    for _, name in ipairs(used_names) do
-        name_set[name] = true
-    end
+-- Usage example:
+-- local ts = TaskScheduler:new()
+-- local tree, err = ts:generate_task_plan_tree(tasks, "root_task")
+-- if not err then
+--     print_task_tree(tree)
+-- else
+--     print("Error:", err)
+-- end
+---@param node table Task node from generate_task_plan_tree
+---@param prefix? string Internal use for indentation
+---@param is_last? boolean Internal use to determine tree branch
+local function print_task_tree(node, prefix, is_last)
+    prefix = prefix or ""
+    is_last = is_last or true
 
-    local filtered = {}
-    for _, task in ipairs(all_tasks) do
-        if name_set[task.name] then
-            table.insert(filtered, task)
+    local branch = is_last and "└─ " or "├─ "
+    local line = prefix .. branch .. node.name .. " (" .. (node.order or "sequence") .. ")"
+    local new_prefix = prefix .. (is_last and "   " or "│  ")
+    if node.deps then
+        for i, child in ipairs(node.deps) do
+            line = line .. '\n' .. print_task_tree(child, new_prefix, i == #node.deps)
         end
     end
-    return filtered
-end
-
---- Collect the list of task names that were actually started during a dry run
----@param dry_tasks loop.Task[]
----@param root_name string
----@param on_dry_complete fun(result: {success:boolean, tasks:string[], errors:string[]})
-local function perform_dry_run(dry_tasks, root_name, on_dry_complete)
-    local errors = {}
-
-    local tmp_scheduler = TaskScheduler:new()
-    tmp_scheduler:start(
-        dry_tasks,
-        root_name,
-        true, -- dry run
-        ---@diagnostic disable-next-line: param-type-mismatch
-        nil, -- page_manager not needed for dry run
-        function(success, reason, dry_run_report)
-            if not success then
-                table.insert(errors, reason or "Dry run failed")
-            end
-            on_dry_complete({
-                success = success and #errors == 0,
-                tasks = dry_run_report or {},
-                errors = errors,
-            })
-        end
-    )
+    return line
 end
 
 ---@param config_dir string
@@ -71,66 +51,43 @@ function M.run_task(config_dir, page_manager_fact, mode, task_name)
             return
         end
 
-        -- Step 1: Perform a dry run to discover exactly which tasks will execute
-        perform_dry_run(all_tasks, root_name, function(dry_result)
-            if not dry_result.success then
-                local msg = { "Failed to start task '" .. tostring(root_name) .. "'" }
-                if dry_result.errors then                    
-                    if #dry_result.errors == 1 then
-                        table.insert(msg, "  " .. dry_result.errors[1])
-                    elseif #dry_result.errors > 1 then
-                        for _, err in ipairs(dry_result.errors) do
-                            table.insert(msg, "• " .. err)
-                        end
-                    end
-                end
-                notifications.notify(msg, vim.log.levels.ERROR)
+        local node_tree, used_tasks, plan_error_msg = _scheduler:generate_task_plan(all_tasks, root_name)
+        if not node_tree or not used_tasks then
+            notifications.notify(plan_error_msg or "Failed to build task plan", vim.log.levels.ERROR)
+            return
+        end
+
+        notifications.notify("Task plan: \n" .. print_task_tree(node_tree))
+
+        -- Step 3: Resolve macros only on the tasks that will be used
+        resolver.resolve_macros(used_tasks, function(resolve_ok, resolved_tasks, resolve_error)
+            if not resolve_ok or not resolved_tasks then
+                notifications.notify({
+                    resolve_error or "Failed to resolve macros in tasks"
+                }, vim.log.levels.ERROR)
                 return
             end
 
-            -- Optional preview of what will run
-            if #dry_result.tasks > 1 then
-                local preview_msg = string.format(
-                    "Will run %d tasks: %s",
-                    #dry_result.tasks,
-                    table.concat(dry_result.tasks, ", ")
-                )
-                notifications.notify({ preview_msg }, vim.log.levels.INFO)
-            end
-
-            -- Step 2: Filter to only the tasks that will actually run
-            local used_tasks = filter_used_tasks(all_tasks, dry_result.tasks)
-
-            -- Step 3: Resolve macros only on the tasks that will be used
-            resolver.resolve_macros(used_tasks, function(resolve_ok, resolved_tasks, resolve_error)
-                if not resolve_ok or not resolved_tasks then
-                    notifications.notify({
-                        resolve_error or "Failed to resolve macros in tasks"
-                    }, vim.log.levels.ERROR)
-                    return
-                end
-
-                -- Step 4: Start the real execution
-                _scheduler:start(
-                    resolved_tasks,
-                    root_name,
-                    false, -- dry_run = false
-                    page_manager_fact,
-                    function(success, reason)
-                        if success then
-                            notifications.notify({
-                                string.format("Task completed successfully: %s", root_name)
-                            }, vim.log.levels.INFO)
-                        else
-                            local msg = string.format("Task failed: %s", root_name)
-                            if reason then
-                                msg = msg .. " (" .. reason .. ")"
-                            end
-                            notifications.notify({ msg }, vim.log.levels.ERROR)
+            -- Step 4: Start the real execution
+            _scheduler:start(
+                resolved_tasks,
+                root_name,
+                false, -- dry_run = false
+                page_manager_fact,
+                function(success, reason)
+                    if success then
+                        notifications.notify({
+                            string.format("Task completed successfully: %s", root_name)
+                        }, vim.log.levels.INFO)
+                    else
+                        local msg = string.format("Task failed: %s", root_name)
+                        if reason then
+                            msg = msg .. " (" .. reason .. ")"
                         end
+                        notifications.notify({ msg }, vim.log.levels.ERROR)
                     end
-                )
-            end)
+                end
+            )
         end)
     end)
 end

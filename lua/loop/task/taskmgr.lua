@@ -202,7 +202,7 @@ end
 ---@param task_type string|nil
 function M.configure(config_dir, task_type)
     if task_type == nil then
-        taskstore.open_task_config(config_dir)
+        taskstore.open_tasks_config(config_dir)
         local _, task_errors = _load_tasks(config_dir)
         if task_errors then
             notifications.notify(task_errors, vim.log.levels.ERROR)

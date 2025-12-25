@@ -29,7 +29,7 @@ describe("loop.tools.Scheduler", function()
     it("completes a single node synchronously and terminates immediately", function()
         local sched = Scheduler:new({ { id = "test" } }, sync_start_node())
         local called = false
-        sched:start("test", function(ok, trigger)
+        sched:start("test", function(id, event) end, function(ok, trigger)
             called = true
             assert.is_true(ok)
             assert.equals("node", trigger)
@@ -41,7 +41,7 @@ describe("loop.tools.Scheduler", function()
     it("completes a single node asynchronously and eventually terminates", function()
         local sched = Scheduler:new({ { id = "test" } }, async_start_node())
         local called = false
-        sched:start("test", function(ok)
+        sched:start("test", function(id, event) end, function(ok)
             called = true
             assert.is_true(ok)
         end)
@@ -54,7 +54,7 @@ describe("loop.tools.Scheduler", function()
     it("reports leaf node failure correctly", function()
         local sched = Scheduler:new({ { id = "fail" } }, sync_start_node({ fail = { succeed = false, reason = "boom" } }))
         local called = false
-        sched:start("fail", function(ok, trigger, param)
+        sched:start("fail", function(id, event) end, function(ok, trigger, param)
             called = true
             assert.is_false(ok)
             assert.equals("node", trigger)
@@ -68,7 +68,7 @@ describe("loop.tools.Scheduler", function()
         local start_node = function() return nil, "blocked" end
         local sched = Scheduler:new({ { id = "test" } }, start_node)
         local called = false
-        sched:start("test", function(ok, trigger, param)
+        sched:start("test", function(id, event) end, function(ok, trigger, param)
             called = true
             assert.is_false(ok)
             assert.equals("node", trigger)
@@ -81,7 +81,7 @@ describe("loop.tools.Scheduler", function()
     it("detects invalid root node (not in graph)", function()
         local sched = Scheduler:new({ { id = "valid" } }, sync_start_node())
         local called = false
-        sched:start("invalid", function(ok, trigger, param)
+        sched:start("invalid", function(id, event) end, function(ok, trigger, param)
             called = true
             assert.is_false(ok)
             assert.equals("invalid_node", trigger)
@@ -99,7 +99,7 @@ describe("loop.tools.Scheduler", function()
         }
         local sched = Scheduler:new(nodes, sync_start_node())
         local called = false
-        sched:start("root", function(ok, trigger, param)
+        sched:start("root", function(id, event) end, function(ok, trigger, param)
             called = true
             assert.is_false(ok)
             assert.equals("cycle", trigger)
@@ -129,7 +129,7 @@ describe("loop.tools.Scheduler", function()
         local sched = Scheduler:new(nodes, start_node)
 
         local root_ok = false
-        sched:start("root", function(ok)
+        sched:start("root", function(id, event) end, function(ok)
             root_ok = ok
         end)
 
@@ -175,7 +175,7 @@ describe("loop.tools.Scheduler", function()
         local received_trigger = nil
         local received_param = nil
 
-        sched:start("task", function(ok, trigger, param)
+        sched:start("task", function(id, event) end, function(ok, trigger, param)
             called = true
             received_ok = ok
             received_trigger = trigger
@@ -215,13 +215,13 @@ describe("loop.tools.Scheduler", function()
             { id = "second" },
         }, start_node)
 
-        sched:start("first", function() end)
+        sched:start("first", function() end, function() end)
 
         vim.wait(50)
         sched:terminate()
 
         local second_called = false
-        sched:start("second", function(ok)
+        sched:start("second", function(id, event) end, function(ok)
             second_called = true
             assert.is_true(ok)
         end)
