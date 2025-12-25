@@ -375,4 +375,59 @@ describe("loop.tools.Scheduler", function()
         assert.equals("root:start", events[3])
         assert.equals("root:stop", events[4])
     end)
+
+    it("executes a shared deep dependency only once across levels", function()
+        local init_calls = 0
+        local nodes = {
+            { id = "init",   deps = {} },
+            { id = "lvl1_a", deps = { "init" } },
+            { id = "lvl1_b", deps = { "init" } },
+            { id = "lvl2",   deps = { "lvl1_a", "lvl1_b" } },
+        }
+
+        local sched = Scheduler:new(nodes, function(id, on_exit)
+            if id == "init" then init_calls = init_calls + 1 end
+            on_exit(true)
+            return { terminate = function() end }
+        end)
+
+        local done = false
+        sched:start("lvl2", function() end, function(ok)
+            done = true
+            assert.is_true(ok)
+        end)
+
+        vim.wait(100, function() return done end)
+        assert.equals(1, init_calls)
+    end)
+
+    it("fails the root if one branch of a shared dependency fails", function()
+        local nodes = {
+            { id = "init",        deps = {} },
+            { id = "branch_ok",   deps = { "init" } },
+            { id = "branch_fail", deps = { "init" } },
+            { id = "root",        deps = { "branch_ok", "branch_fail" }, order = "parallel" },
+        }
+
+        local sched = Scheduler:new(nodes, function(id, on_exit)
+            if id == "branch_fail" then
+                on_exit(false, "node")
+            else
+                on_exit(true)
+            end
+            return { terminate = function() end }
+        end)
+
+        local res_ok, res_trigger
+        local done = false
+        sched:start("root", function() end, function(ok, trigger)
+            res_ok = ok
+            res_trigger = trigger
+            done = true
+        end)
+
+        vim.wait(100, function() return done end)
+        assert.is_false(res_ok)
+        assert.equals("node", res_trigger)
+    end)
 end)
