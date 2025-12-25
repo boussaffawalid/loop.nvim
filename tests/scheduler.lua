@@ -102,8 +102,6 @@ describe("loop.tools.Scheduler", function()
         local sched = Scheduler:new(nodes, sync_start_node())
         local called = false
         sched:start("root", function(id, event) 
-            print(id .. " " .. event)
-
         end, function(ok, trigger, param)
             called = true
             assert.is_false(ok)

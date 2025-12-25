@@ -78,7 +78,7 @@ function Scheduler:start(root, on_node_event, on_exit)
 end
 
 function Scheduler:terminate()
-    if self._current_run_id or self._terminating then return end
+    if self._terminating then return end
     self:_begin_termination()
 end
 
@@ -126,6 +126,12 @@ function Scheduler:_run_node(run_id, node_id, on_node_event, on_exit)
         return
     end
 
+    if self._visiting[node_id] then
+        on_node_event(node_id, "stop")
+        on_exit(false, "cycle", node_id)
+        return
+    end
+
     -- Already running → queue callback
     if self._inflight[node_id] then
         table.insert(self._inflight[node_id],
@@ -140,12 +146,6 @@ function Scheduler:_run_node(run_id, node_id, on_node_event, on_exit)
     if not node then
         on_node_event(node_id, "stop")
         on_exit(false, "invalid_node", node_id)
-        return
-    end
-
-    if self._visiting[node_id] then
-        on_node_event(node_id, "stop")
-        on_exit(false, "cycle", node_id)
         return
     end
 
