@@ -149,7 +149,7 @@ function CompBuffer:get_or_create_buf()
     if self._buf ~= -1 then
         if not vim.api.nvim_buf_is_loaded(self._buf) then
             vim.fn.bufload(self._buf)
-            self:_setup_buf(true)
+            self:_setup_buf()
             if self._renderer then
                 self._renderer.render(self._buf)
             end
@@ -158,15 +158,14 @@ function CompBuffer:get_or_create_buf()
     end
 
     self._buf = vim.api.nvim_create_buf(false, true)
-    self:_setup_buf(true)
+    self:_setup_buf()
     if self._renderer then
         self._renderer.render(self._buf)
     end
     return self._buf
 end
 
----@param own_buf boolean
-function CompBuffer:_setup_buf(own_buf)
+function CompBuffer:_setup_buf()
     assert(self._buf > 0)
     local buf = self._buf
 
@@ -184,11 +183,9 @@ function CompBuffer:_setup_buf(own_buf)
 
     do
         local b = vim.bo[buf]
-        if own_buf then
-            b.buftype = "nofile"
-            b.modifiable = false
-        end
-        b.bufhidden = "hide"
+        b.buftype = "nofile"
+        b.modifiable = false
+        b.bufhidden = "wipe"
         b.swapfile = false
         b.undolevels = -1   -- buffer can't become "modified"
         b.buflisted = false -- hide from :ls

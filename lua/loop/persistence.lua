@@ -3,7 +3,7 @@ local M = {}
 local filetools = require('loop.tools.file')
 local uitools = require('loop.tools.uitools')
 
----@type {shada:boolean, undo:boolean, session:boolean,config_dir:string} | nil
+---@type {config_dir:string,flags:{shada:boolean, undo:boolean, session:boolean}} | nil
 local _state = nil
 
 ---@type {shadafile:string|nil, undodir:string|nil, undofile:boolean|nil}?
@@ -95,7 +95,7 @@ function M.close()
     end
 
     -- === Save Session with completely safe options ===
-    if _state.session then
+    if _state.flags.session then
         local session_path = vim.fs.joinpath(_state.config_dir, "session.vim")
 
         -- Temporarily set safe sessionoptions
@@ -109,14 +109,14 @@ function M.close()
     end
 
     -- === Save ShaDa ===
-    if _state.shada then
+    if _state.flags.shada then
         vim.cmd("wshada!")
     end
 
     -- === Restore Original Settings ===
     if _originals.shadafile ~= nil then
         vim.opt.shadafile = _originals.shadafile
-    elseif _state.shada then
+    elseif _state.flags.shada then
         vim.opt.shadafile = ""
     end
 
@@ -129,7 +129,7 @@ function M.close()
     end
 
     -- === Reload Global ShaDa ===
-    if _state.shada then
+    if _state.flags.shada then
         vim.cmd("rshada!")
     end
 
