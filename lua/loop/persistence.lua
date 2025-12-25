@@ -16,7 +16,7 @@ local function ensure_dir(path)
 end
 
 -- Completely safe sessionoptions for workspace sessions
-local SAFE_SESSIONOPTIONS = "blank,buffers,folds,help,tabpages,winsize,localoptions"
+local SAFE_SESSIONOPTIONS = "blank,buffers,folds,help,tabpages,winsize"
 
 ---@param config_dir string
 ---@param flags {shada:boolean,undo:boolean,session:boolean}

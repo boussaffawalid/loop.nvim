@@ -23,10 +23,11 @@ vim.api.nvim_create_autocmd("VimEnter", {
     group = group,
     callback = function()
         local args = vim.fn.argv()
-        local has_dir = #args > 0 and vim.fn.isdirectory(args[1]) == 1
-        local dir = has_dir and args[1] or vim.fn.getcwd()
-        if _is_workspace_dir(dir) then
-            require("loop").load_workspace(dir)
+        if #args == 0 then
+            local dir = vim.fn.getcwd()
+            if _is_workspace_dir(dir) then
+                require("loop").load_workspace(dir)
+            end
         end
     end
 })

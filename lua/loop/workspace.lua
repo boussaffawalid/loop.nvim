@@ -216,7 +216,8 @@ function M.configure_workspace()
         notifications.notify("No active workspace", vim.log.levels.WARN)
         return
     end
-    local ok, configfile = _init_or_open_ws_config()
+    local config_dir = _get_config_dir(_workspace_dir)
+    local ok, configfile = _init_or_open_ws_config(config_dir)
     if not ok or not configfile then
         notifications.notify("Failed to setup configuration file")
         return
