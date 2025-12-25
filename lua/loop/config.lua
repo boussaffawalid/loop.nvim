@@ -2,6 +2,8 @@
 ---@field change string
 ---@field success string
 ---@field failure string
+---@field waiting string
+---@field running string
 
 ---@class loop.Config.Window
 ---@field symbols loop.Config.Window.Symbols

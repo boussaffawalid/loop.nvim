@@ -136,7 +136,7 @@ function ItemTree:init(args)
 
     self._expand_char = args.expand_char or "▸"
     self._collapse_char = args.collapse_char or "▾"
-    self._indent_string = args.indent_string or " "
+    self._indent_string = args.indent_string or "  "
     self._loading_text = args.loading_text or "Loading..."
     self._render_delay_ms = args.render_delay_ms or 150
 
@@ -224,6 +224,16 @@ function ItemTree:get_cur_item(comp)
     return { id = id, data = nodedata.userdata }
 end
 
+---@param id any
+---@return loop.comp.ItemTree.Item|nil
+function ItemTree:get_item(id)
+    ---@type loop.comp.ItemTree.ItemData?
+    local itemdata = self:_get_item(id)
+    if not itemdata then return nil end
+    ---@type loop.comp.ItemTree.Item
+    return { id = id, data = itemdata.userdata }
+end
+
 function ItemTree:clear_items()
     self._tree = Tree:new()
     self:_request_render()
@@ -294,8 +304,12 @@ function ItemTree:_on_render_request(buf)
         if item_id and (self._tree:have_children(item_id) or item.children_callback) then
             icon = item.expanded and self._collapse_char or self._expand_char
         end
-        local prefix = string.rep(self._indent_string, flatnode.depth or 0) .. icon
-        if icon ~= "" then prefix = prefix .. " " end
+        local prefix = string.rep(self._indent_string, flatnode.depth or 0)
+        if icon ~= "" then
+            prefix = prefix .. icon .. " "
+        else
+            prefix = prefix .. string.rep(" ", vim.fn.strdisplaywidth(self._expand_char)) .. " "
+        end
 
         -- Get Content
         local raw_hls = {}

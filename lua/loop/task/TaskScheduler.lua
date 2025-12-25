@@ -6,6 +6,8 @@ local taskmgr = require("loop.task.taskmgr")
 ---@field tasks loop.Task[]
 ---@field root string
 ---@field page_manager_fact loop.PageManagerFactory
+---@field on_start fun()
+---@field on_task_event fun(name: string, event: "start"|"stop", success:boolean)
 ---@field on_exit fun(success:boolean, reason?:string)
 
 ---@class loop.TaskTreeNode
@@ -158,10 +160,10 @@ function TaskScheduler:_run_plan(plan)
     local final_cb = vim.schedule_wrap(plan.on_exit)
 
     ---@type loop.scheduler.NodeEventFn
-    local function on_node_event(id, event)
-        vim.notify(event .. " --> " .. id)
+    local function on_node_event(id, event, success)
+        plan.on_task_event(id, event, success)
     end
-    
+
     ---@type loop.scheduler.exit_fn
     local on_plan_end = function(success, trigger, param)
         local reason
@@ -186,6 +188,8 @@ function TaskScheduler:_run_plan(plan)
         end
     end
 
+    plan.on_start()
+
     scheduler:start(plan.root, on_node_event, on_plan_end)
 
     self._scheduler = scheduler
@@ -207,8 +211,10 @@ end
 ---@param tasks loop.Task[]
 ---@param root string
 ---@param page_manager_fact loop.PageManagerFactory
+---@param on_start fun()
+---@param on_task_event fun(name: string, event: "start"|"stop", success:boolean)
 ---@param on_exit? fun(success:boolean, reason?:string)
-function TaskScheduler:start(tasks, root, page_manager_fact, on_exit)
+function TaskScheduler:start(tasks, root, page_manager_fact, on_start, on_task_event, on_exit)
     on_exit = on_exit or function(success, reason) end
     dry_run = dry_run == true
 
@@ -217,6 +223,8 @@ function TaskScheduler:start(tasks, root, page_manager_fact, on_exit)
         root = root,
         dry_run = dry_run,
         page_manager_fact = page_manager_fact,
+        on_start = on_start,
+        on_task_event = on_task_event,
         on_exit = on_exit,
     }
 

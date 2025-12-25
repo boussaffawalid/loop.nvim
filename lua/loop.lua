@@ -20,6 +20,8 @@ local DEFAULT_CONFIG = {
             change  = "●",
             success = "✓",
             failure = "✗",
+            waiting = "⧗",
+            running = "▶",
         },
     },
     macros = require("loop.task.macros"),

@@ -6,7 +6,7 @@ local class = require("loop.tools.class")
 ---@alias loop.scheduler.StartNodeFn fun(id: loop.scheduler.NodeId, on_exit: fun(ok:boolean, reason:string|nil)): { terminate:fun() }|nil, string|nil
 ---@alias loop.scheduler.NodeEvent "start"|"stop"
 
----@alias loop.scheduler.NodeEventFn fun(id: loop.scheduler.NodeId, event: loop.scheduler.NodeEvent)
+---@alias loop.scheduler.NodeEventFn fun(id: loop.scheduler.NodeId, event: loop.scheduler.NodeEvent, success:boolean)
 
 ---@class loop.scheduler.Node
 ---@field id loop.scheduler.NodeId
@@ -37,6 +37,7 @@ function Scheduler:init(nodes, start_node)
 
     self._start_node = start_node
 
+    ---@type {loop.scheduler.NodeId: {on_node_event:loop.scheduler.NodeEventFn,on_exit:loop.scheduler.exit_fn}[]}
     self._inflight = {} -- NodeId → list of waiting callbacks
     self._running = {}
     self._visiting = {}
@@ -100,7 +101,7 @@ function Scheduler:_begin_termination()
     for node_id, _ in pairs(self._visiting) do
         if self._inflight[node_id] then
             for _, cb in ipairs(self._inflight[node_id]) do
-                cb.on_node_event(node_id, "stop")
+                cb.on_node_event(node_id, "stop", false)
                 cb.on_exit(false, "interrupt")
             end
             self._inflight[node_id] = nil
@@ -137,13 +138,13 @@ function Scheduler:_run_node(run_id, node_id, on_node_event, on_exit)
 
     -- Already done → succeed immediately
     if self._done[node_id] then
-        on_node_event(node_id, "stop")
+        on_node_event(node_id, "stop", true)
         on_exit(true, "node")
         return
     end
 
     if self._visiting[node_id] then
-        on_node_event(node_id, "stop")
+        on_node_event(node_id, "stop", false)
         on_exit(false, "cycle", node_id)
         return
     end
@@ -160,7 +161,7 @@ function Scheduler:_run_node(run_id, node_id, on_node_event, on_exit)
 
     local node = self._nodes[node_id]
     if not node then
-        on_node_event(node_id, "stop")
+        on_node_event(node_id, "stop", false)
         on_exit(false, "invalid_node", node_id)
         return
     end
@@ -177,20 +178,24 @@ function Scheduler:_run_node(run_id, node_id, on_node_event, on_exit)
     self:_run_deps(run_id, node.deps or {}, node.order or "sequence", function(ok, trigger, param)
             self._visiting[node_id] = nil
             if not ok then
-                for _, cb in ipairs(self._inflight[node_id] or {}) do
-                    cb.on_node_event(node_id, "stop")
-                    cb.on_exit(false, trigger, param)
+                if self._inflight[node_id] then
+                    for _, cb in ipairs(self._inflight[node_id]) do
+                        cb.on_node_event(node_id, "stop", false)
+                        cb.on_exit(false, trigger, param)
+                    end
                 end
                 self._inflight[node_id] = nil
                 return
             end
             -- Node starts
-            on_node_event(node_id, "start")
+            on_node_event(node_id, "start", true)
             self:_run_leaf(run_id, node_id, function(ok2, trigger2, param2)
                 if ok2 then self._done[node_id] = true end
-                for _, cb in ipairs(self._inflight[node_id] or {}) do
-                    cb.on_node_event(node_id, "stop")
-                    cb.on_exit(ok2, trigger2, param2)
+                if self._inflight[node_id] then
+                    for _, cb in ipairs(self._inflight[node_id]) do
+                        cb.on_node_event(node_id, "stop", ok2)
+                        cb.on_exit(ok2, trigger2, param2)
+                    end
                 end
                 self._inflight[node_id] = nil
             end)

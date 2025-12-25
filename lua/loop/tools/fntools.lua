@@ -12,5 +12,4 @@ function M.called_once(fn)
     end
 end
 
-
 return M
