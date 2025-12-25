@@ -56,7 +56,9 @@ end
 ---@param on_node_event loop.scheduler.NodeEventFn
 function Scheduler:start(root, on_node_event, on_exit)
     if self._current_run_id then
-        on_exit(false, "interrupt", "another schedule is running")
+        vim.schedule(function()
+            on_exit(false, "interrupt", "another schedule is running")
+        end)
         return
     end
     self._run_id = self._run_id + 1
@@ -88,9 +90,23 @@ end
 function Scheduler:_begin_termination()
     if self._terminating then return end
     self._terminating = true
+
+    -- Terminate running leaf nodes
     for _, ctl in pairs(self._running) do
         ctl.terminate()
     end
+
+    -- Also fail any nodes still in dependency resolution
+    for node_id, _ in pairs(self._visiting) do
+        if self._inflight[node_id] then
+            for _, cb in ipairs(self._inflight[node_id]) do
+                cb.on_node_event(node_id, "stop")
+                cb.on_exit(false, "interrupt")
+            end
+            self._inflight[node_id] = nil
+        end
+    end
+    self._visiting = {}
     self:_check_termination_complete()
 end
 
@@ -161,7 +177,7 @@ function Scheduler:_run_node(run_id, node_id, on_node_event, on_exit)
     self:_run_deps(run_id, node.deps or {}, node.order or "sequence", function(ok, trigger, param)
             self._visiting[node_id] = nil
             if not ok then
-                for _, cb in ipairs(self._inflight[node_id]) do
+                for _, cb in ipairs(self._inflight[node_id] or {}) do
                     cb.on_node_event(node_id, "stop")
                     cb.on_exit(false, trigger, param)
                 end
@@ -172,7 +188,7 @@ function Scheduler:_run_node(run_id, node_id, on_node_event, on_exit)
             on_node_event(node_id, "start")
             self:_run_leaf(run_id, node_id, function(ok2, trigger2, param2)
                 if ok2 then self._done[node_id] = true end
-                for _, cb in ipairs(self._inflight[node_id]) do
+                for _, cb in ipairs(self._inflight[node_id] or {}) do
                     cb.on_node_event(node_id, "stop")
                     cb.on_exit(ok2, trigger2, param2)
                 end

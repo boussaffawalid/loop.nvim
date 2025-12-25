@@ -101,7 +101,7 @@ describe("loop.tools.Scheduler", function()
         }
         local sched = Scheduler:new(nodes, sync_start_node())
         local called = false
-        sched:start("root", function(id, event) 
+        sched:start("root", function(id, event)
         end, function(ok, trigger, param)
             called = true
             assert.is_false(ok)
@@ -362,5 +362,303 @@ describe("loop.tools.Scheduler", function()
         vim.wait(100, function() return done end)
         assert.is_false(res_ok)
         assert.equals("node", res_trigger)
+    end)
+
+
+    it("rejects concurrent start() calls with interrupt", function()
+        local leaf_started = 0
+        local start_node = function(id, on_exit)
+            leaf_started = leaf_started + 1
+            vim.defer_fn(function()
+                on_exit(true)
+            end, 50)
+            return { terminate = function() end }
+        end
+
+        local sched = Scheduler:new({ { id = "task" } }, start_node)
+
+        local success_results = 0
+        local interrupt_results = 0
+
+        -- First start — should succeed
+        sched:start("task", function() end, function(ok, trigger, param)
+            if ok then
+                success_results = success_results + 1
+            else
+                interrupt_results = interrupt_results + 1
+            end
+        end)
+
+        -- Concurrent starts — should be rejected with interrupt (now async via vim.schedule)
+        sched:start("task", function() end, function(ok, trigger, param)
+            if ok then
+                success_results = success_results + 1
+            else
+                interrupt_results = interrupt_results + 1
+                assert.equals("interrupt", trigger)
+                assert.equals("another schedule is running", param)
+            end
+        end)
+
+        sched:start("task", function() end, function(ok, trigger, param)
+            if ok then
+                success_results = success_results + 1
+            else
+                interrupt_results = interrupt_results + 1
+                assert.equals("interrupt", trigger)
+                assert.equals("another schedule is running", param)
+            end
+        end)
+
+        vim.wait(300) -- Give plenty of time for all scheduled callbacks
+
+        assert.equals(1, leaf_started, "Only one leaf node should start")
+        assert.equals(1, success_results, "Only the first run should succeed")
+        assert.equals(2, interrupt_results, "Both concurrent calls should be rejected with interrupt")
+        assert.is_true(sched:is_terminated())
+    end)
+
+    it("handles concurrent starts of the same root correctly (only one run)", function()
+        local executions = 0
+        local start_node = function(id, on_exit)
+            executions = executions + 1
+            vim.schedule(function()
+                on_exit(true)
+            end)
+            return { terminate = function() end }
+        end
+
+        local sched = Scheduler:new({ { id = "task" } }, start_node)
+
+        local completed_ok = 0
+        local interrupted = 0
+
+        local function make_success_callback()
+            return function(ok, trigger, param)
+                if ok then
+                    completed_ok = completed_ok + 1
+                else
+                    interrupted = interrupted + 1
+                end
+            end
+        end
+
+        local function make_interrupt_callback()
+            return function(ok, trigger, param)
+                if ok then
+                    completed_ok = completed_ok + 1
+                else
+                    interrupted = interrupted + 1
+                    assert.equals("interrupt", trigger)
+                    assert.equals("another schedule is running", param)
+                end
+            end
+        end
+
+        -- First call — accepted and will succeed
+        sched:start("task", function() end, make_success_callback())
+
+        -- Second and third — rejected asynchronously
+        sched:start("task", function() end, make_interrupt_callback())
+        sched:start("task", function() end, make_interrupt_callback())
+
+        vim.wait(300)
+
+        assert.equals(1, executions, "Leaf node started only once")
+        assert.equals(1, completed_ok, "Only one run completed successfully")
+        assert.equals(2, interrupted, "Two concurrent starts were interrupted")
+        assert.is_true(sched:is_terminated())
+    end)
+
+    it("terminates during dependency execution (interrupt propagation)", function()
+        local log = {}
+        local start_node = function(id, on_exit)
+            table.insert(log, "start:" .. id)
+            local ctl = {
+                terminate = function()
+                    table.insert(log, "terminate:" .. id)
+                    on_exit(false, "terminated")
+                end
+            }
+            -- Delay completion to allow termination race
+            vim.defer_fn(function()
+                if id ~= "long" then return end
+                table.insert(log, "complete:" .. id)
+                on_exit(true)
+            end, 100)
+            return ctl
+        end
+
+        local nodes = {
+            { id = "quick" },
+            { id = "long" },
+            { id = "root", deps = { "quick", "long" }, order = "parallel" },
+        }
+
+        local sched = Scheduler:new(nodes, start_node)
+        local called = false
+
+        sched:start("root", function() end, function(ok, trigger, param)
+            called = true
+            assert.is_false(ok)
+            assert.equals("interrupt", trigger)
+        end)
+
+        vim.wait(50) -- let both start
+        assert.equals("start:quick", log[1])
+        assert.equals("start:long", log[2])
+
+        sched:terminate()
+
+        vim.wait(200)
+        assert.is_true(called)
+        assert.is_true(vim.tbl_contains(log, "terminate:quick"))
+        assert.is_true(vim.tbl_contains(log, "terminate:long"))
+        assert.is_true(sched:is_terminated())
+    end)
+
+    it("does not leak state on early failure (invalid node)", function()
+        local sched = Scheduler:new({ { id = "valid" } }, sync_start_node())
+
+        local called = false
+        sched:start("invalid", function() end, function(ok, trigger)
+            called = true
+            assert.is_false(ok)
+            assert.equals("invalid_node", trigger)
+        end)
+
+        assert.is_true(called)
+        assert.is_true(sched:is_terminated())
+        assert.is_nil(sched._current_run_id)
+        assert.is_false(sched._terminating)
+
+        -- Can start again after early failure
+        local second_called = false
+        sched:start("valid", function() end, function(ok)
+            second_called = true
+            assert.is_true(ok)
+        end)
+        vim.wait(100)
+        assert.is_true(second_called)
+    end)
+
+    it("handles termination while deps are still being resolved (visiting cleanup)", function()
+        local start_node = function(id, on_exit)
+            -- Only "leaf" actually completes
+            if id == "leaf" then
+                vim.defer_fn(function() on_exit(true) end, 100)
+            end
+            return { terminate = function() end }
+        end
+
+        local nodes = {
+            { id = "leaf" },
+            { id = "mid",  deps = { "leaf" } },
+            { id = "root", deps = { "mid" } },
+        }
+
+        local sched = Scheduler:new(nodes, start_node)
+        local completed = false
+
+        sched:start("root", function() end, function(ok)
+            completed = true
+            assert.is_false(ok) -- terminated
+        end)
+
+        vim.wait(30)
+        sched:terminate()
+
+        vim.wait(200)
+        assert.is_true(completed)
+        assert.is_true(sched:is_terminated())
+    end)
+
+    it("supports parallel dependencies with mixed success/failure", function()
+        local nodes = {
+            { id = "success1" },
+            { id = "success2" },
+            { id = "fail" },
+            { id = "root",    deps = { "success1", "success2", "fail" }, order = "parallel" },
+        }
+
+        local behaviors = {
+            success1 = { succeed = true },
+            success2 = { succeed = true },
+            fail     = { succeed = false, reason = "failed on purpose" },
+        }
+
+        local sched = Scheduler:new(nodes, sync_start_node(behaviors))
+        local result_ok, result_trigger, result_param
+        local done = false
+
+        sched:start("root", function() end, function(ok, trigger, param)
+            result_ok = ok
+            result_trigger = trigger
+            result_param = param
+            done = true
+        end)
+
+        vim.wait(100)
+        assert.is_true(done)
+        assert.is_false(result_ok)
+        assert.equals("node", result_trigger)
+        assert.equals("failed on purpose", result_param)
+    end)
+
+    it("reuses completed nodes across multiple runs", function()
+        local execution_log = {}
+
+        local start_node = function(id, on_exit)
+            table.insert(execution_log, id)
+            on_exit(true)
+            return { terminate = function() end }
+        end
+
+        local nodes = {
+            { id = "shared" },
+            { id = "root",  deps = { "shared" } },
+        }
+
+        local sched = Scheduler:new(nodes, start_node)
+
+        -- First run
+        local done1 = false
+        sched:start("root", function() end, function() done1 = true end)
+        vim.wait(100)
+        assert.is_true(done1)
+
+        -- Second run — shared should run again (not cached across runs)
+        execution_log = {}
+        local done2 = false
+        sched:start("root", function() end, function() done2 = true end)
+        vim.wait(100)
+        assert.is_true(done2)
+        assert.equals(2, #execution_log) -- both shared and root executed again
+    end)
+
+    it("cleans up properly when terminate() called before any leaves start", function()
+        local started = false
+        local start_node = function(id, on_exit)
+            started = true
+            -- Never completes naturally
+            return { terminate = function() on_exit(false, "term") end }
+        end
+
+        local sched = Scheduler:new({ { id = "task" } }, start_node)
+
+        local called = false
+        sched:start("task", function() end, function(ok, trigger)
+            called = true
+            assert.is_false(ok)
+            assert.equals("node", trigger)
+        end)
+
+        -- Terminate immediately
+        sched:terminate()
+
+        vim.wait(200)
+        assert.is_true(started)
+        assert.is_true(called)
+        assert.is_true(sched:is_terminated())
     end)
 end)
