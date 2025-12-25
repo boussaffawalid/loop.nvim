@@ -104,6 +104,7 @@ describe("loop.tools.Scheduler", function()
             assert.is_false(ok)
             assert.equals("cycle", trigger)
         end)
+        vim.wait(100)
         assert.is_true(called)
         assert.is_true(sched:is_terminated())
     end)
@@ -133,7 +134,7 @@ describe("loop.tools.Scheduler", function()
             root_ok = ok
         end)
 
-        vim.wait(300)
+        vim.wait(100)
 
         assert.is_true(root_ok)
         assert.are.same({
@@ -243,5 +244,135 @@ describe("loop.tools.Scheduler", function()
         assert.truthy(first_end, "first should end")
         assert.truthy(second_start, "second should start")
         assert.is_true(first_end < second_start)
+    end)
+
+    it("handles shared dependencies (diamond pattern) only once", function()
+        local execution_count = 0
+        local nodes = {
+            { id = "shared" },
+            { id = "a",     deps = { "shared" } },
+            { id = "b",     deps = { "shared" } },
+            { id = "root",  deps = { "a", "b" }, order = "parallel" },
+        }
+
+        local start_node = function(id, on_exit)
+            if id == "shared" then execution_count = execution_count + 1 end
+            vim.defer_fn(function() on_exit(true) end, 10)
+            return { terminate = function() end }
+        end
+
+        local sched = Scheduler:new(nodes, start_node)
+        local done = false
+
+        sched:start("root", function() end, function(ok)
+            done = true
+            assert.is_true(ok)
+        end)
+
+        vim.wait(200, function() return done end)
+        assert.equals(1, execution_count) -- Shared should not run twice
+    end)
+
+    it("respects sequential execution order", function()
+        local log = {}
+        local nodes = {
+            { id = "step1" },
+            { id = "step2" },
+            { id = "root", deps = { "step1", "step2" }, order = "sequence" },
+        }
+
+        local start_node = function(id, on_exit)
+            table.insert(log, id .. "_start")
+            vim.defer_fn(function()
+                table.insert(log, id .. "_stop")
+                on_exit(true)
+            end, 20)
+            return { terminate = function() end }
+        end
+
+        local sched = Scheduler:new(nodes, start_node)
+        local done = false
+        sched:start("root", function() end, function() done = true end)
+
+        vim.wait(500, function() return done end)
+
+        -- In sequence, step1 must stop before step2 starts
+        assert.equals("step1_start", log[1])
+        assert.equals("step1_stop", log[2])
+        assert.equals("step2_start", log[3])
+        assert.equals("step2_stop", log[4])
+    end)
+
+    it("handles immediate start_node failures gracefully", function()
+        local nodes = { { id = "fail_me" } }
+
+        local start_node = function(id, on_exit)
+            return nil, "OS Error: Permission Denied"
+        end
+
+        local sched = Scheduler:new(nodes, start_node)
+        local result_ok, result_param
+        local done = false
+
+        sched:start("fail_me", function() end, function(ok, trigger, param)
+            result_ok = ok
+            result_param = param
+            done = true
+        end)
+
+        vim.wait(100, function() return done end)
+        assert.is_false(result_ok)
+        assert.equals("OS Error: Permission Denied", result_param)
+        assert.is_true(sched:is_terminated())
+    end)
+
+    it("terminates current run if start is called again", function()
+        local terminated_ids = {}
+        local nodes = { { id = "long_task" } }
+
+        local start_node = function(id, on_exit)
+            return { terminate = function() table.insert(terminated_ids, id) end }
+        end
+
+        local sched = Scheduler:new(nodes, start_node)
+
+        -- Start run 1
+        sched:start("long_task", function() end, function() end)
+        assert.is_true(sched:is_running())
+
+        -- Start run 2 immediately
+        sched:start("long_task", function() end, function() end)
+
+        -- Check if the first run's node was told to terminate
+        assert.equals(1, #terminated_ids)
+        assert.equals("long_task", terminated_ids[1])
+    end)
+
+    it("fires start and stop events in correct pairs", function()
+        local nodes = {
+            { id = "child" },
+            { id = "root", deps = { "child" } }
+        }
+        local events = {}
+
+        local start_node = function(id, on_exit)
+            vim.defer_fn(function() on_exit(true) end, 5)
+            return { terminate = function() end }
+        end
+
+        local sched = Scheduler:new(nodes, start_node)
+        local done = false
+
+        sched:start("root", function(id, event)
+            table.insert(events, id .. ":" .. event)
+        end, function() done = true end)
+
+        vim.wait(200, function() return done end)
+
+        -- Expected order: child starts/stops, then root starts/stops
+        assert.equals("child:start", events[1])
+        assert.equals("child:stop", events[2])
+        assert.equals("root:start", events[3])
+        assert.equals("root:stop", events[4])
     end)
 end)
