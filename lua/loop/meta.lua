@@ -47,6 +47,7 @@ error('Cannot require a meta file')
 ---@field add_keymap fun(key:string,keymap:loop.KeyMap)
 ---@field get_cursor fun():integer[]|nil
 ---@field follow_last_line fun()
+---@field disable_change_events fun()
 
 ---@class loop.PageGroup
 ---@field expired fun():boolean -- if true, can't access pages anymore

@@ -117,6 +117,7 @@ local function _create_progress_page(page_manager_fact)
     _current_progress_pmgr = page_manager_fact()
     local group = _current_progress_pmgr.add_page_group("status", "Status")
     local page = group.add_page("status", "Status", true)
+    page:disable_change_events()
     comp:link_to_buffer(page)
     return comp, page
 end
@@ -141,13 +142,13 @@ function M.run_task(config_dir, page_manager_fact, mode, task_name)
         progress_info.tree_comp, progress_info.page = _create_progress_page(page_manager_fact)
         progress_info.page.set_ui_flags(symbols.waiting)
 
-        local function report_failure(msg)
-            progress_info.tree_comp:upsert_item({ id = _status_node_id, data = { log_message = msg, log_level = vim.log.levels.ERROR } })
+        local function report_status(msg, is_error)
+            progress_info.tree_comp:upsert_item({ id = _status_node_id, data = { log_message = msg, log_level = is_error and vim.log.levels.ERROR or nil} })
             progress_info.page.set_ui_flags(symbols.failure)
         end
 
         if #all_tasks == 0 then
-            report_failure("No tasks found")
+            report_status("No tasks found", true)
             return
         end
 
@@ -155,7 +156,7 @@ function M.run_task(config_dir, page_manager_fact, mode, task_name)
 
         local node_tree, used_tasks, plan_error_msg = _scheduler:generate_task_plan(all_tasks, root_name)
         if not node_tree or not used_tasks then
-            report_failure(plan_error_msg or "Failed to build task plan")
+            report_status(plan_error_msg or "Failed to build task plan", true)
             return
         end
 
@@ -164,10 +165,10 @@ function M.run_task(config_dir, page_manager_fact, mode, task_name)
         -- Resolve macros only on the tasks that will be used
         resolver.resolve_macros(used_tasks, function(resolve_ok, resolved_tasks, resolve_error)
             if not resolve_ok or not resolved_tasks then
-                report_failure(resolve_error or "Failed to resolve macros in tasks")
+                report_status(resolve_error or "Failed to resolve macros in tasks", true)
                 return
             end
-
+            report_status("Scheduling tasks")
             -- Start the real execution
             _scheduler:start(
                 resolved_tasks,

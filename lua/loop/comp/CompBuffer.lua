@@ -23,6 +23,7 @@ function CompBuffer:init(type, name)
     self._buf = -1
     self._ui_flags = ""
     self._trackers = Trackers:new()
+    self._no_change_events = false
 
     self._throttled_ui_flags_notification = throttle.throttle_wrap(100, function()
         self._trackers:invoke("on_ui_flags_update")
@@ -60,6 +61,9 @@ function CompBuffer:make_controller()
         end,
         follow_last_line = function()
             self:follow_last_line()
+        end,
+        disable_change_events = function ()
+            self:disable_change_events()
         end
     }
 end
@@ -101,6 +105,10 @@ end
 ---@return boolean
 function CompBuffer:remove_tracker(id)
     return CompBuffer._trackers:remove_tracker(id)
+end
+
+function CompBuffer:disable_change_events()
+    self._no_change_events = true
 end
 
 function CompBuffer:follow_last_line()
@@ -277,7 +285,7 @@ function CompBuffer:_immediate_render()
     if not self._renderer then return end
 
     local changed = self._renderer.render(self._buf, self._user_data)
-    if changed then
+    if changed and not self._no_change_events then
         self._trackers:invoke("on_change")
     end
 end
