@@ -15,7 +15,7 @@ local _error_hl_ns = vim.api.nvim_create_namespace("LoopPluginOutputCompHl")
 
 ---@class loop.comp.OutputLines
 ---@field new fun(self: loop.comp.OutputLines) : loop.comp.OutputLines
----@field _linked_buf loop.BufferController|nil
+---@field _linked_buf loop.CompBufferController|nil
 ---@field _pending_lines loop.comp.output.PendingLine[]
 local OutputLines = class()
 
@@ -23,7 +23,7 @@ function OutputLines:init()
     self._pending_lines = {}
 end
 
----@param buf_ctrl loop.BufferController
+---@param buf_ctrl loop.CompBufferController
 function OutputLines:link_to_buffer(buf_ctrl)
     self._linked_buf = buf_ctrl
     self._linked_buf.set_renderer({

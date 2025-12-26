@@ -38,20 +38,42 @@ error('Cannot require a meta file')
 ---@field render fun(bufnr:number):boolean -- return true if changed
 ---@field dispose? fun()
 
----@class loop.BufferController
----@field set_renderer fun(renderer:loop.CompRenderer)
----@field request_refresh fun()
+---@class loop.BaseBufferController
 ---@field set_user_data fun(user_data:any)
 ---@field get_user_data fun():any
----@field set_ui_flags fun(flags:string)
 ---@field add_keymap fun(key:string,keymap:loop.KeyMap)
 ---@field get_cursor fun():integer[]|nil
 ---@field disable_change_events fun()
 
+---@class loop.CompBufferController : loop.BaseBufferController
+---@field set_renderer fun(renderer:loop.CompRenderer)
+---@field request_refresh fun()
+
+---@class loop.ReplController
+---@field set_input_handler fun(handler:fun(input:string))
+---@field add_output fun(text:string)
+
+---@class loop.PageController
+---@field set_ui_flags fun(flags:string)
+
+---@class loop.PageOpts
+---@field type "term"|"comp_buf"|"repl_buf"
+---@field id string
+---@field buftype string
+---@field label string
+---@field activate boolean?
+---@field term_args loop.tools.TermProc.StartArgs?
+
+---@class loop.PageData
+---@field page loop.PageController
+---@field base_buf loop.BaseBufferController?
+---@field comp_buf loop.CompBufferController?
+---@field repl_buf loop.ReplController?
+---@field term_proc loop.tools.TermProc?
+
 ---@class loop.PageGroup
----@field add_page fun(id:string,label:string,activate?:boolean):loop.BufferController|nil
----@field add_term_page fun(id:string, args:loop.tools.TermProc.StartArgs, activate?:boolean):loop.tools.TermProc|nil,string|nil
----@field get_page_controller fun(id:string):loop.BufferController|nil
+---@field add_page fun(opts:loop.PageOpts):loop.PageData?,string?
+---@field get_page fun(id:string):loop.PageData|nil
 ---@field activate_page fun(id:string)
 ---@field delete_pages fun()
 
@@ -60,6 +82,6 @@ error('Cannot require a meta file')
 ---@field get_page_group fun(id:string):loop.PageGroup|nil
 ---@field delete_page_group fun(id:string)
 ---@field delete_all_groups fun(expire:boolean)
----@field get_page_controller fun(group_id:string,page_id:string):loop.BufferController|nil
+---@field get_page fun(group_id:string,page_id:string):loop.PageData|nil
 
 ---@alias loop.PageManagerFactory fun():loop.PageManager

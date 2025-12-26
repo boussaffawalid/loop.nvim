@@ -39,7 +39,7 @@ local Trackers = require("loop.tools.Trackers")
 
 ---@class loop.comp.ItemTree
 ---@field new fun(self: loop.comp.ItemTree, args:loop.comp.ItemTree.InitArgs): loop.comp.ItemTree
----@field _linked_buf loop.BufferController|nil
+---@field _linked_buf loop.CompBufferController|nil
 local ItemTree = class()
 
 local _ns_id = vim.api.nvim_create_namespace('LoopPluginItemTreeComp')
@@ -158,7 +158,7 @@ function ItemTree:add_tracker(cb) return self._trackers:add_tracker(cb) end
 function ItemTree:remove_tracker(id) return self._trackers:remove_tracker(id) end
 
 --- linked comp ---
----@param buf_ctrl loop.BufferController
+---@param buf_ctrl loop.CompBufferController
 function ItemTree:link_to_buffer(buf_ctrl)
     local cur_item_data = function()
         local cursor = buf_ctrl:get_cursor()
@@ -206,7 +206,7 @@ end
 -- ITEM MANAGEMENT
 ---------------------------------------------------------
 
----@param comp loop.BufferController
+---@param comp loop.CompBufferController
 ---@return loop.comp.ItemTree.Item|nil
 function ItemTree:get_cur_item(comp)
     local cursor = comp:get_cursor()

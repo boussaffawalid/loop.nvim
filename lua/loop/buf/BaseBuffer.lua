@@ -1,71 +1,32 @@
 local class = require('loop.tools.class')
-local throttle = require('loop.tools.throttle')
 local Trackers = require('loop.tools.Trackers')
-
+local throttle = require('loop.tools.throttle')
 
 ---@alias loop.comp.Keymaps table<string,loop.KeyMap>
 
 ---@class loop.comp.Tracker
 ---@field on_change fun()|nil
----@field on_ui_flags_update fun()|nil
 
----@class loop.comp.CompBuffer
----@field new fun(self: loop.comp.CompBuffer, type : string, name:string): loop.comp.CompBuffer
----@field _renderer loop.CompRenderer|nil
-local CompBuffer = class()
+---@class loop.comp.BaseBuffer
+---@field new fun(self: loop.comp.BaseBuffer, type : string, name:string): loop.comp.BaseBuffer
+local BaseBuffer = class()
 
 ---@param type string
 ---@param name string
-function CompBuffer:init(type, name)
+function BaseBuffer:init(type, name)
     self._type = type
     self._name = name
     self._keymaps = {}
     self._buf = -1
-    self._ui_flags = ""
+
     self._trackers = Trackers:new()
-    self._no_change_events = false
 
-    self._throttled_ui_flags_notification = throttle.throttle_wrap(100, function()
-        self._trackers:invoke("on_ui_flags_update")
-    end)
-
-    self._throttled_render = throttle.throttle_wrap(100, function()
-        self:_immediate_render()
+    self._throttled_change_notif = throttle.throttle_wrap(100, function()
+        self._trackers:invoke("on_change")
     end)
 end
 
----@return loop.BufferController
-function CompBuffer:make_controller()
-    ---@type loop.BufferController
-    return {
-        set_renderer = function(renderer)
-            self:set_renderer(renderer)
-        end,
-        request_refresh = function()
-            self:render()
-        end,
-        set_user_data = function(user_data)
-            self:set_user_data(user_data)
-        end,
-        get_user_data = function()
-            return self:get_user_data()
-        end,
-        set_ui_flags = function(flags)
-            self:set_ui_flags(flags)
-        end,
-        add_keymap = function(key, keymap)
-            self:add_keymap(key, keymap)
-        end,
-        get_cursor = function()
-            return self:get_cursor()
-        end,
-        disable_change_events = function()
-            self:disable_change_events()
-        end
-    }
-end
-
-function CompBuffer:destroy()
+function BaseBuffer:destroy()
     if self._destroyed then
         return
     end
@@ -74,51 +35,71 @@ function CompBuffer:destroy()
         vim.api.nvim_buf_delete(self._buf, { force = true })
         assert(self._buf == -1)
     end
-    if self._renderer and self._renderer.dispose then
-        self._renderer.dispose()
+end
+
+---@return loop.BaseBufferController
+function BaseBuffer:make_controller()
+    local obj = self
+    ---@type loop.BaseBufferController
+    return {
+        set_user_data = function(user_data)
+            obj:set_user_data(user_data)
+        end,
+        get_user_data = function()
+            return obj:get_user_data()
+        end,
+        add_keymap = function(key, keymap)
+            obj:add_keymap(key, keymap)
+        end,
+        get_cursor = function()
+            return obj:get_cursor()
+        end,
+        disable_change_events = function()
+            obj:disable_change_events()
+        end
+    }
+end
+
+function BaseBuffer:request_change_notif()
+    if not self._no_change_events then
+        self._throttled_change_notif()
     end
 end
-
----@param renderer loop.CompRenderer
-function CompBuffer:set_renderer(renderer)
-    self._renderer = renderer
-end
-
-function CompBuffer:set_user_data(data)
+function BaseBuffer:set_user_data(data)
     self._user_data = data
 end
 
-function CompBuffer:get_user_data()
+function BaseBuffer:get_user_data()
     return self._user_data
 end
 
 ---@param callbacks loop.comp.Tracker>
 ---@return number
-function CompBuffer:add_tracker(callbacks)
+function BaseBuffer:add_tracker(callbacks)
     return self._trackers:add_tracker(callbacks)
 end
 
 ---@param id number
 ---@return boolean
-function CompBuffer:remove_tracker(id)
-    return CompBuffer._trackers:remove_tracker(id)
+function BaseBuffer:remove_tracker(id)
+    return BaseBuffer._trackers:remove_tracker(id)
 end
 
-function CompBuffer:disable_change_events()
+function BaseBuffer:disable_change_events()
     self._no_change_events = true
 end
 
-function CompBuffer:_on_buf_enter()
+function BaseBuffer:_on_buf_enter()
     self:_apply_keymaps()
 end
 
----@return string|nil
-function CompBuffer:get_name()
+---@return string
+function BaseBuffer:get_name()
     return self._name
 end
 
 ---@return number -- buffer number
-function CompBuffer:get_buf()
+function BaseBuffer:get_buf()
     if self._destroyed then
         return -1
     end
@@ -126,28 +107,26 @@ function CompBuffer:get_buf()
 end
 
 ---@return number -- buffer number
-function CompBuffer:get_or_create_buf()
+---@return boolean refresh_needed
+function BaseBuffer:get_or_create_buf()
     assert(not self._destroyed)
+
     if self._buf ~= -1 then
+        local refresh_needed = false
         if not vim.api.nvim_buf_is_loaded(self._buf) then
             vim.fn.bufload(self._buf)
             self:_setup_buf()
-            if self._renderer then
-                self._renderer.render(self._buf)
-            end
+            refresh_needed = true
         end
-        return self._buf
+        return self._buf, refresh_needed
     end
 
     self._buf = vim.api.nvim_create_buf(false, true)
     self:_setup_buf()
-    if self._renderer then
-        self._renderer.render(self._buf)
-    end
-    return self._buf
+    return self._buf, true
 end
 
-function CompBuffer:_setup_buf()
+function BaseBuffer:_setup_buf()
     assert(self._buf > 0)
     local buf = self._buf
 
@@ -194,14 +173,14 @@ end
 
 ---@param key string
 ---@param keymap loop.KeyMap
-function CompBuffer:add_keymap(key, keymap)
+function BaseBuffer:add_keymap(key, keymap)
     assert(not self._keymaps[key])
     self._keymaps[key] = keymap
     self:_apply_keymap(key, keymap)
 end
 
 ---@param keymaps table<string, loop.KeyMap>
-function CompBuffer:add_keymaps(keymaps)
+function BaseBuffer:add_keymaps(keymaps)
     for key, keymap in pairs(keymaps) do
         assert(not self._keymaps[key])
         self._keymaps[key] = keymap
@@ -209,7 +188,7 @@ function CompBuffer:add_keymaps(keymaps)
     end
 end
 
-function CompBuffer:_apply_keymaps()
+function BaseBuffer:_apply_keymaps()
     if self._keymaps then
         for key, item in pairs(self._keymaps) do
             self:_apply_keymap(key, item)
@@ -219,7 +198,7 @@ end
 
 ---@param key string
 ---@param item loop.KeyMap
-function CompBuffer:_apply_keymap(key, item)
+function BaseBuffer:_apply_keymap(key, item)
     if self._buf ~= -1 then
         local modes = { "n" }
         --local ok =
@@ -229,36 +208,11 @@ function CompBuffer:_apply_keymap(key, item)
 end
 
 ---@return integer[]|nil
-function CompBuffer:get_cursor()
+function BaseBuffer:get_cursor()
     if vim.api.nvim_get_current_buf() ~= self._buf then
         return nil
     end
     return vim.api.nvim_win_get_cursor(0)
 end
 
----@return string
-function CompBuffer:get_ui_flags()
-    return self._ui_flags
-end
-
----@param str string
-function CompBuffer:set_ui_flags(str)
-    self._ui_flags = str
-    self._throttled_ui_flags_notification()
-end
-
-function CompBuffer:render()
-    self._throttled_render()
-end
-
-function CompBuffer:_immediate_render()
-    if not self._buf or self._buf <= 0 then return end
-    if not self._renderer then return end
-
-    local changed = self._renderer.render(self._buf)
-    if changed and not self._no_change_events then
-        self._trackers:invoke("on_change")
-    end
-end
-
-return CompBuffer
+return BaseBuffer

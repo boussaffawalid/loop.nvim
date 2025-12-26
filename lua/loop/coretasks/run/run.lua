@@ -41,10 +41,22 @@ function M.start_app(task, page_manager, on_exit)
     if not pagegroup then
         return nil, "page manager expired"
     end
-    local proc, err_msg = pagegroup.add_term_page(task.name, start_args, true)
+
+    local page_data, err_msg = pagegroup.add_page({
+        id = "term",
+        type = "term",
+        buftype = "term",
+        label = task.name,
+        term_args = start_args,
+        activate = true,
+    })
+
+    --add_term_page(task.name, start_args, true)
+    local proc = page_data and page_data.term_proc or nil
     if not proc then
         return nil, err_msg
     end
+
     ---@type loop.TaskControl
     local controller = {
         terminate = function()

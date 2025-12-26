@@ -75,6 +75,7 @@ local function _convert_task_tree(node, tree_comp, parent_id)
 end
 
 ---@param page_manager_fact loop.PageManagerFactory
+---@return loop.comp.ItemTree,loop.PageController
 local function _create_progress_page(page_manager_fact)
     local symbols = config.current.window.symbols
     ---@type loop.comp.ItemTree.InitArgs
@@ -114,14 +115,21 @@ local function _create_progress_page(page_manager_fact)
     if _current_progress_pmgr then
         _current_progress_pmgr.delete_all_groups(true)
     end
+
     _current_progress_pmgr = page_manager_fact()
     local group = _current_progress_pmgr.add_page_group("status", "Status")
     assert(group, "page mgr error")
-    local page = group.add_page("status", "Status", true)
-    assert(page)
-    page:disable_change_events()
-    comp:link_to_buffer(page)
-    return comp, page
+    local page_data = group.add_page({
+        id = "status",
+        type = "comp_buf",
+        label = "Status",
+        buftype = "status",
+        activate = true,
+    })
+    assert(page_data)
+    page_data.comp_buf.disable_change_events()
+    comp:link_to_buffer(page_data.comp_buf)
+    return comp, page_data.page
 end
 
 ---@param config_dir string
@@ -138,8 +146,8 @@ function M.run_task(config_dir, page_manager_fact, mode, task_name)
         local progress_info = {
             ---@type loop.comp.ItemTree|nil
             tree_comp = nil,
-            ---@type loop.BufferController|nil
-            page = nil
+            ---@type loop.PageData|nil
+            page_data = nil
         }
         progress_info.tree_comp, progress_info.page = _create_progress_page(page_manager_fact)
         progress_info.page.set_ui_flags(symbols.waiting)

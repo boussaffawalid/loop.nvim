@@ -31,7 +31,7 @@ local _ns_id = vim.api.nvim_create_namespace('LoopPluginItemListComp')
 ---@field _trackers loop.tools.Trackers<loop.comp.ItemList.Tracker>
 ---@field _current_item loop.comp.ItemList.Item|nil   # NEW: currently active item
 ---@field _current_prefix string                            # NEW: resolved prefix
----@field _linked_buf loop.BufferController|nil
+---@field _linked_buf loop.CompBufferController|nil
 local ItemList = class()
 
 ---@param args loop.comp.ItemList.InitArgs
@@ -51,7 +51,7 @@ function ItemList:init(args)
     end
 end
 
----@param buf_ctrl loop.BufferController
+---@param buf_ctrl loop.CompBufferController
 function ItemList:link_to_buffer(buf_ctrl)
     local get_cur_item = function()
         local cursor = buf_ctrl:get_cursor()
@@ -80,12 +80,12 @@ function ItemList:link_to_buffer(buf_ctrl)
         if item then
             self._trackers:invoke("on_open", item.id, item.data)
         end
-    end    
+    end
 
     self._linked_buf.add_keymap('<CR>', { callback = select_handler, desc = "Select item" })
     self._linked_buf.add_keymap('<2-LeftMouse>', { callback = select_handler, desc = "Select item" })
-    self._linked_buf.add_keymap('go', { callback = open_handler, desc = "Open details" })   
-    
+    self._linked_buf.add_keymap('go', { callback = open_handler, desc = "Open details" })
+
     buf_ctrl:request_refresh()
 end
 
@@ -257,13 +257,6 @@ end
 function ItemList:_request_render()
     if self._linked_buf then
         self._linked_buf.request_refresh()
-    end
-end
-
----@oparam flags string
-function ItemList:set_ui_flags(flags)
-    if self._linked_buf then
-        self._linked_buf.set_ui_flags(flags)
     end
 end
 
