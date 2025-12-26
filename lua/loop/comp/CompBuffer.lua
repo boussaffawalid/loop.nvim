@@ -262,7 +262,7 @@ function CompBuffer:_immediate_render()
     if not self._buf or self._buf <= 0 then return end
     if not self._renderer then return end
 
-    local changed = self._renderer.render(self._buf, self._user_data)
+    local changed = self._renderer.render(self._buf)
     if changed and not self._no_change_events then
         self._trackers:invoke("on_change")
     end
