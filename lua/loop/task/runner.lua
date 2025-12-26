@@ -116,7 +116,9 @@ local function _create_progress_page(page_manager_fact)
     end
     _current_progress_pmgr = page_manager_fact()
     local group = _current_progress_pmgr.add_page_group("status", "Status")
+    assert(group, "page mgr error")
     local page = group.add_page("status", "Status", true)
+    assert(page)
     page:disable_change_events()
     comp:link_to_buffer(page)
     return comp, page
@@ -143,7 +145,7 @@ function M.run_task(config_dir, page_manager_fact, mode, task_name)
         progress_info.page.set_ui_flags(symbols.waiting)
 
         local function report_status(msg, is_error)
-            progress_info.tree_comp:upsert_item({ id = _status_node_id, data = { log_message = msg, log_level = is_error and vim.log.levels.ERROR or nil} })
+            progress_info.tree_comp:upsert_item({ id = _status_node_id, data = { log_message = msg, log_level = is_error and vim.log.levels.ERROR or nil } })
             progress_info.page.set_ui_flags(symbols.failure)
         end
 

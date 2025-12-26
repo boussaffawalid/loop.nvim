@@ -84,7 +84,8 @@ local function _setup_tabs()
                 uiflags1 = uiflags1 ~= "" and (' ' .. uiflags1) or uiflags1
             end
             local str1 = ("[%s%s]"):format(tab.label, uiflags1)
-            table.insert(winbar_parts, string.format("%%%d@v:lua.LoopWorkspace._winbar_click@%s%%T", arr_idx * 1000, str1))
+            table.insert(winbar_parts,
+                string.format("%%%d@v:lua.LoopWorkspace._winbar_click@%s%%T", arr_idx * 1000, str1))
             if is_active_tab then table.insert(winbar_parts, "%#LoopPluginInactiveTab#") end
         end
         if #tab.pages > 1 then
@@ -254,7 +255,7 @@ local function _add_tab_page(tab, page, activate)
         end,
         on_ui_flags_update = _throttled_setup_tabs
     })
-    vim.schedule(function ()
+    vim.schedule(function()
         if activate then
             M.show_window()
         end
@@ -485,7 +486,7 @@ local function _add_term_page(tab, args, activate)
 
     -- fake render to force change notifications
     page:set_renderer({
-        render = function(bufnr, user_data) return true end
+        render = function(bufnr) return true end
     })
 
     _create_window()
@@ -573,7 +574,6 @@ function _create_page_manager()
     assert(_init_done, "init not done")
 
     local is_expired = false
-    local page_manager_expired_err = "page manager expired"
 
     ---@param tab loop.TabInfo
     ---@return loop.PageGroup
@@ -582,9 +582,8 @@ function _create_page_manager()
         local by_id = {}
         ---@type loop.PageGroup
         return {
-            expired = function() return is_expired end,
             add_page = function(id, label, activate)
-                assert(not is_expired, page_manager_expired_err)
+                if is_expired then return nil end
                 assert(not by_id[id], "page already exists in group")
                 local page = Page:new("page", label)
                 by_id[id] = page
@@ -592,7 +591,7 @@ function _create_page_manager()
                 return page:make_controller()
             end,
             add_term_page = function(id, args, activate)
-                assert(not is_expired, page_manager_expired_err)
+                if is_expired then return nil, "page expired" end
                 return _add_term_page(tab, args, activate)
             end,
             get_page_controller = function(id)
@@ -601,10 +600,11 @@ function _create_page_manager()
                 return page and page:get_user_data() or nil
             end,
             activate_page = function(id)
+                if is_expired then return end
                 _set_active_tab(_get_tab_index(tab), _get_page_index(tab, by_id[id]))
             end,
             delete_pages = function()
-                assert(not is_expired, page_manager_expired_err)
+                if is_expired then return end
                 _delete_tab_pages(tab)
             end,
         }
@@ -619,14 +619,13 @@ function _create_page_manager()
 
     ---@type loop.PageManager
     return {
-        expired = function() return is_expired end,
         get_page_controller = function(group_id, page_id)
             if is_expired then return nil end
             local group = groups[group_id]
             return group and group.group.get_page_controller(page_id) or nil
         end,
         add_page_group = function(id, label)
-            assert(not is_expired, page_manager_expired_err)
+            if is_expired then return nil end
             assert(not groups[id], "page group already exists")
             local tab = _add_tab(label)
             local group = make_page_group(tab)
@@ -639,12 +638,12 @@ function _create_page_manager()
             return data and data.group or nil
         end,
         delete_page_group = function(id)
-            assert(not is_expired, page_manager_expired_err)
+            if is_expired then return end
             local group = groups[id]
             if group then _delete_tab(group.tab) end
         end,
         delete_all_groups = function(expire)
-            assert(not is_expired, page_manager_expired_err)
+            if is_expired then return end
             for _, grp in pairs(groups) do
                 _delete_tab(grp.tab)
             end

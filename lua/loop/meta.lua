@@ -4,7 +4,7 @@ error('Cannot require a meta file')
 ---@class loop.WorkspaceConfig
 ---@field name string
 ---@field save {include:string[], exclude:string[],follow_symlinks:boolean} 
----@field persistence {shada:boolean,undo:boolean,session:boolean}
+---@field persistence {shada:boolean,undo:boolean}
 
 ---@class loop.Task
 ---@field name string # non-empty task
@@ -35,7 +35,7 @@ error('Cannot require a meta file')
 ---@field desc string
 
 ---@class loop.CompRenderer
----@field render fun(bufnr:number,user_data:any):boolean -- return true if changed
+---@field render fun(bufnr:number):boolean -- return true if changed
 ---@field dispose? fun()
 
 ---@class loop.BufferController
@@ -50,16 +50,14 @@ error('Cannot require a meta file')
 ---@field disable_change_events fun()
 
 ---@class loop.PageGroup
----@field expired fun():boolean -- if true, can't access pages anymore
----@field add_page fun(id:string,label:string,activate?:boolean):loop.BufferController
+---@field add_page fun(id:string,label:string,activate?:boolean):loop.BufferController|nil
 ---@field add_term_page fun(id:string, args:loop.tools.TermProc.StartArgs, activate?:boolean):loop.tools.TermProc|nil,string|nil
 ---@field get_page_controller fun(id:string):loop.BufferController|nil
 ---@field activate_page fun(id:string)
 ---@field delete_pages fun()
 
 ---@class loop.PageManager
----@field expired fun():boolean -- if true, can't access pages anymore
----@field add_page_group fun(id:string,label:string):loop.PageGroup
+---@field add_page_group fun(id:string,label:string):loop.PageGroup|nil
 ---@field get_page_group fun(id:string):loop.PageGroup|nil
 ---@field delete_page_group fun(id:string)
 ---@field delete_all_groups fun(expire:boolean)

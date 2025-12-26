@@ -246,6 +246,32 @@ function M.close_workspace(quiet)
     _close_workspace(quiet)
 end
 
+--[[
+function M.save_session()
+    local session_path = vim.fs.joinpath(config_dir, "session.vim")
+
+    if filetools.file_exists(session_path) then
+        vim.cmd("silent! source " .. vim.fn.fnameescape(session_path))
+    end
+end
+
+function M.load_session()
+    -- === Save Session with completely safe options ===
+    if _state.flags.session then
+        local session_path = vim.fs.joinpath(_state.config_dir, "session.vim")
+
+        -- Temporarily set safe sessionoptions
+        local old_sessionoptions = vim.o.sessionoptions
+        vim.o.sessionoptions = SAFE_SESSIONOPTIONS
+
+        vim.cmd("mksession! " .. vim.fn.fnameescape(session_path))
+
+        -- Restore user's original sessionoptions
+        vim.o.sessionoptions = old_sessionoptions
+    end
+end
+]]
+
 ---@param args string[]
 ---@return string[]
 function M.workspace_subcommands(args)

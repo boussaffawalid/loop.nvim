@@ -9,9 +9,8 @@ return {
         follow_symlinks = false,
     },
     persistence = {
-        __order = {"shada", "undo", "session"},
+        __order = {"shada", "undo"},
         shada = true,
         undo = true,
-        session = true,
     },
 }

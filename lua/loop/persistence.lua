@@ -3,7 +3,7 @@ local M = {}
 local filetools = require('loop.tools.file')
 local uitools = require('loop.tools.uitools')
 
----@type {config_dir:string,flags:{shada:boolean, undo:boolean, session:boolean}} | nil
+---@type {config_dir:string,flags:{shada:boolean, undo:boolean}} | nil
 local _state = nil
 
 ---@type {shadafile:string|nil, undodir:string|nil, undofile:boolean|nil}?
@@ -19,7 +19,7 @@ end
 local SAFE_SESSIONOPTIONS = "blank,buffers,folds,help,tabpages,winsize"
 
 ---@param config_dir string
----@param flags {shada:boolean,undo:boolean,session:boolean}
+---@param flags {shada:boolean,undo:boolean}
 function M.open(config_dir, flags)
     if not flags then return end
     ensure_dir(config_dir)
@@ -66,15 +66,6 @@ function M.open(config_dir, flags)
         vim.opt.undofile = true
     end
 
-    -- === Session Support ===
-    if flags.session then
-        local session_path = vim.fs.joinpath(config_dir, "session.vim")
-
-        if filetools.file_exists(session_path) then
-            vim.cmd("silent! source " .. vim.fn.fnameescape(session_path))
-        end
-    end
-
     -- === Refresh buffers ===
     if flags.shada or flags.undo then
         for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
@@ -92,20 +83,6 @@ end
 function M.close()
     if not _state or not _originals then
         return
-    end
-
-    -- === Save Session with completely safe options ===
-    if _state.flags.session then
-        local session_path = vim.fs.joinpath(_state.config_dir, "session.vim")
-
-        -- Temporarily set safe sessionoptions
-        local old_sessionoptions = vim.o.sessionoptions
-        vim.o.sessionoptions = SAFE_SESSIONOPTIONS
-
-        vim.cmd("mksession! " .. vim.fn.fnameescape(session_path))
-
-        -- Restore user's original sessionoptions
-        vim.o.sessionoptions = old_sessionoptions
     end
 
     -- === Save ShaDa ===

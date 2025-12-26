@@ -89,7 +89,9 @@ function M.start_build(task, page_manager, on_exit)
     if not pagegroup then
         pagegroup = page_manager.add_page_group(task.type, task.name)
     end
-
+    if not pagegroup then
+        return nil, "page manager expired"
+    end
     local proc, err_msg = pagegroup.add_term_page(task.name, start_args, true)
     if not proc then
         return nil, err_msg

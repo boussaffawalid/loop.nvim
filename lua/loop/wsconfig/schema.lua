@@ -32,7 +32,7 @@ local schema = {
         persistence = {
             type = "object",
             description = "Persistence settings for various Neovim data types",
-            required = { "shada", "undo", "session" },
+            required = { "shada", "undo" },
             properties = {
                 shada = {
                     type = "boolean",
@@ -41,10 +41,6 @@ local schema = {
                 undo = {
                     type = "boolean",
                     description = "Enable undo history persistence",
-                },
-                session = {
-                    type = "boolean",
-                    description = "Enable session persistence",
                 },
             },
             additionalProperties = false,

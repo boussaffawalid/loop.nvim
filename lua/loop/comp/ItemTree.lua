@@ -187,7 +187,7 @@ function ItemTree:link_to_buffer(buf_ctrl)
 
     self._linked_buf = buf_ctrl
     self._linked_buf.set_renderer({
-        render = function(bufnr, user_data)
+        render = function(bufnr)
             return self:_on_render_request(bufnr)
         end
     })
