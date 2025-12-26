@@ -1,4 +1,6 @@
 local class = require('loop.tools.class')
+local strtools = require('loop.tools.strtools')
+local uitools = require('loop.tools.uitools')
 local BaseBuffer = require('loop.buf.BaseBuffer')
 
 ---@class loop.comp.ReplBuffer:loop.comp.BaseBuffer
@@ -18,6 +20,7 @@ function ReplBuffer:init(type, name)
     BaseBuffer.init(self, type, name)
     self._chan = nil
     self._current_line = ""
+    self._cursor_pos = 1
     self._history = {}
     self._history_idx = 0
     self._prompt = COLORS.BOLD .. COLORS.GREEN .. "> " .. COLORS.RESET
@@ -64,17 +67,15 @@ end
 
 function ReplBuffer:on_complete(line, callback)
     if self._completion_handler then
-        -- Increment counter: every Tab press gets a unique ID
-        local request_id = self._completion.request_counter + 1
-
-        self._completion.request_counter = request_id
+        -- Increment tracking
+        self._completion.request_counter = self._completion.request_counter + 1
+        local request_id = self._completion.request_counter
         self._completion.current_request = request_id
 
         self._completion_handler(line, function(suggestions)
-            -- Only proceed if this is still the most recent request
-            -- AND the line hasn't changed since we started
-            if self._completion.current_request == self._completion.request_counter and line == self._current_line then
-                callback(suggestions)
+            local current_left = self._current_line:sub(1, self._cursor_pos - 1)
+            if request_id == self._completion.request_counter and line == current_left then
+                callback(suggestions or {})
             end
         end)
     else
@@ -95,7 +96,18 @@ end
 
 ---Refreshes the current input line in the terminal
 function ReplBuffer:_redraw_line()
-    vim.api.nvim_chan_send(self._chan, "\r\27[K" .. self._prompt .. self._current_line)
+    -- 1. Move to start of line (\r) and clear it (\27[K)
+    -- 2. Print prompt + full current line
+    -- 3. Move cursor back to the correct position
+    --    The column is: (length of prompt without ANSI codes) + self._cursor_pos
+
+    -- Strip ANSI codes from prompt to calculate length
+    local clean_prompt = self._prompt:gsub("\27%[[%d;]*m", "")
+    local col = #clean_prompt + self._cursor_pos
+
+    -- \27[%dG moves the cursor to the absolute horizontal column
+    local out = "\r\27[K" .. self._prompt .. self._current_line .. "\27[" .. col .. "G"
+    vim.api.nvim_chan_send(self._chan, out)
 end
 
 function ReplBuffer:_setup_buf()
@@ -103,67 +115,86 @@ function ReplBuffer:_setup_buf()
     local buf = self:get_buf()
     assert(buf and buf > 0)
     vim.keymap.set('t', '<Esc>', function() vim.cmd('stopinsert') end, { buffer = buf })
+    -- FORCE TAB to be handled directly
+    -- Without this, Neovim might intercept Tab for its own purposes.
+    vim.keymap.set('t', '<Tab>', function()
+        self:_handle_raw_input("\t")
+    end, { buffer = buf, silent = true })
     self._chan = vim.api.nvim_open_term(buf, {
         on_input = function(_, _, _, data)
             self:_handle_raw_input(data)
         end
     })
-   self:_redraw_line()    
+    self:_redraw_line()
 end
 
 function ReplBuffer:_handle_raw_input(data)
-    -- 1. Enter
+    -- 0. Ctrl+C (Interrupt)
+    if data == "\3" then
+        self._completion.current_request = -1
+        vim.api.nvim_chan_send(self._chan, "^C\r\n")
+        self._current_line = ""
+        self._cursor_pos = 1
+        self:_redraw_line()
+        return
+    end
+
+    -- 1. Enter (Submission)
     if data == "\r" or data == "\n" then
         local line = self._current_line
-
-        -- Move cursor to a fresh line before processing
         vim.api.nvim_chan_send(self._chan, "\r\n")
 
         self._current_line = ""
+        self._cursor_pos = 1 -- Reset cursor to start
         self._history_idx = 0
 
         if line ~= "" and self._history[#self._history] ~= line then
             table.insert(self._history, line)
         end
 
-        -- IMPORTANT: Do not print the prompt here.
-        -- self:on_input() will call send_line(), which now handles prompt printing.
         self:on_input(line)
-
-        -- If on_input didn't produce output (and thus didn't print a prompt),
-        -- we ensure a prompt exists for the next command.
-        -- We use \r\27[K to avoid double prompts.
         vim.api.nvim_chan_send(self._chan, "\r\27[K" .. self._prompt)
+        return
+    end
 
-        -- 2. Tab (Complete)
-    elseif data == "\t" then
-        -- Capture the line state at the exact moment Tab was pressed
-        local line_at_request = self._current_line
+    -- 2. Tab (Complete)
+    if data == "\t" then
+        local is_at_end = self._cursor_pos > #self._current_line
+        local char_after = self._current_line:sub(self._cursor_pos, self._cursor_pos)
 
-        self:on_complete(line_at_request, function(suggestions)
-            if #suggestions == 1 then
-                self._current_line = suggestions[1]
-                self:_redraw_line()
-            elseif #suggestions > 1 then
-                -- Multi-line suggestions printout
-                vim.api.nvim_chan_send(self._chan, "\r\n" .. table.concat(suggestions, "  ") .. "\r\n")
-                self:_redraw_line()
-            end
+        -- Logic:
+        -- 1. Always allow if at the end of the line.
+        -- 2. If in the middle, only allow if there is a space immediately after the cursor.
+        local should_complete = is_at_end or (char_after == " ")
+
+        if not should_complete then
+            return
+        end
+
+        local line_to_cursor = self._current_line:sub(1, self._cursor_pos - 1)
+        local line_after_cursor = self._current_line:sub(self._cursor_pos)
+
+        self:on_complete(line_to_cursor, function(targets)
+            self:_apply_completion(line_to_cursor, line_after_cursor, targets)
         end)
+        return
+    end
 
-        -- 3. Arrow Keys (History)
-        -- Up: \27[A, Down: \27[B
-    elseif data == "\27[A" then -- Up
+    -- 3. Ctrl+p or Arrow up (History)
+    if data == "\16" or data == "\27[A" then
         if #self._history > 0 and (self._history_idx == 0 or self._history_idx > 1) then
-            if self._history_idx == 0 then
-                self._history_idx = #self._history
-            else
-                self._history_idx = self._history_idx - 1
-            end
+            self._completion.current_request = -1 -- DISCARD pending completion
+            self._history_idx = self._history_idx == 0 and #self._history or self._history_idx - 1
             self._current_line = self._history[self._history_idx]
+            self._cursor_pos = #self._current_line + 1
             self:_redraw_line()
         end
-    elseif data == "\27[B" then -- Down
+        return
+    end
+
+    -- 4. Ctrl+n or Arrow down (History)
+    if data == "\14" or data == "\27[B" then
+        self._completion.current_request = -1 -- DISCARD pending completion
         if self._history_idx > 0 then
             if self._history_idx < #self._history then
                 self._history_idx = self._history_idx + 1
@@ -172,23 +203,105 @@ function ReplBuffer:_handle_raw_input(data)
                 self._history_idx = 0
                 self._current_line = ""
             end
+            self._cursor_pos = #self._current_line + 1
             self:_redraw_line()
         end
+        return
+    end
 
-        -- 4. Backspace
-    elseif data == "\b" or data == string.char(127) then
-        if #self._current_line > 0 then
-            self._current_line = self._current_line:sub(1, -2)
-            vim.api.nvim_chan_send(self._chan, "\b \b")
+    if data == "\27[D" then -- Left
+        if self._cursor_pos > 1 then
+            self._cursor_pos = self._cursor_pos - 1
+            self:_redraw_line()
+        end
+        return
+    end
+
+    if data == "\27[C" then -- Right
+        if self._cursor_pos <= #self._current_line then
+            self._cursor_pos = self._cursor_pos + 1
+            self:_redraw_line()
+        end
+        return
+    end
+
+    -- 4. Backspace (Deletion at Cursor)
+    if data == "\b" or data == string.char(127) then
+        if self._cursor_pos > 1 then
+            local left = self._current_line:sub(1, self._cursor_pos - 2)
+            local right = self._current_line:sub(self._cursor_pos)
+            self._current_line = left .. right
+            self._cursor_pos = self._cursor_pos - 1
+            self._completion.current_request = -1
+            self:_redraw_line()
+        end
+        return
+    end
+
+    -- 5. Regular Text Input (Insertion at Cursor)
+    -- We ignore any remaining escape sequences starting with \27
+    if not data:find("^\27") then
+        local left = self._current_line:sub(1, self._cursor_pos - 1)
+        local right = self._current_line:sub(self._cursor_pos)
+        self._current_line = left .. data .. right
+        self._cursor_pos = self._cursor_pos + #data
+        self._completion.current_request = -1
+        self:_redraw_line()
+        return
+    end
+end
+
+---Handles the result of an asynchronous completion request
+---@param line_to_cursor string Text before/at cursor
+---@param line_after_cursor string Text after cursor
+---@param targets string[]
+function ReplBuffer:_apply_completion(line_to_cursor, line_after_cursor, targets)
+    if not targets or #targets == 0 then return end
+
+    -- 1. Single Suggestion
+    if #targets == 1 then
+        -- Handle both raw string arrays or LLDB target objects
+        local suggestion = type(targets[1]) == "table" and targets[1] or targets[1]
+
+        -- Extract the prefix (everything before the word being completed)
+        local prefix, fragment = line_to_cursor:match("(.-)([^%s]*)$")
+
+        local is_word_match = suggestion:lower():find("^" .. vim.pesc(fragment:lower()))
+
+        local new_before
+        if is_word_match then
+            -- Replace the fragment with the suggestion
+            new_before = prefix .. suggestion
+        elseif suggestion:lower():find("^" .. vim.pesc(line_to_cursor:lower())) then
+            -- Suggestion is a full replacement of the left side
+            new_before = suggestion
+        else
+            -- No overlap found, just append to the current word
+            new_before = prefix .. fragment .. suggestion
         end
 
-        -- 5. Regular Input
-    else
-        -- Simple check to ignore other escape sequences (like Left/Right arrows for now)
-        if not data:find("^\27") then
-            self._current_line = self._current_line .. data
-            vim.api.nvim_chan_send(self._chan, data)
+        -- APPLY: Merge the new head with the existing tail
+        self._current_line = new_before .. line_after_cursor
+
+        -- MOVE CURSOR: Place it right after the completion
+        self._cursor_pos = #new_before + 1
+
+        self:_redraw_line()
+
+        -- 2. Multiple Suggestions: Render Grid
+    elseif #targets > 1 then
+        local display_items = {}
+        for _, t in ipairs(targets) do
+            local text = type(t) == "table" and t.text or t
+            table.insert(display_items, text)
         end
+
+        local win_width = uitools.get_window_text_width()
+        local grid = strtools.format_grid(display_items, win_width)
+
+        -- Print grid and redraw the line (cursor stays where it was)
+        vim.api.nvim_chan_send(self._chan, "\r\n" .. grid .. "\r\n")
+        self:_redraw_line()
     end
 end
 

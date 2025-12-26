@@ -217,4 +217,31 @@ function M.to_pretty_str(val)
     return _value_to_string(val)
 end
 
+function M.format_grid(items, width)
+    if #items == 0 then return "" end
+    
+    local max_len = 0
+    for _, item in ipairs(items) do
+        max_len = math.max(max_len, #item)
+    end
+    
+    local col_width = max_len + 2 -- Add padding
+    local num_cols = math.max(1, math.floor(width / col_width))
+    local num_rows = math.ceil(#items / num_cols)
+    
+    local lines = {}
+    for r = 1, num_rows do
+        local row_items = {}
+        for c = 1, num_cols do
+            local idx = (c - 1) * num_rows + r
+            if items[idx] then
+                -- Pad the string to the column width
+                table.insert(row_items, items[idx] .. string.rep(" ", col_width - #items[idx]))
+            end
+        end
+        table.insert(lines, table.concat(row_items))
+    end
+    return table.concat(lines, "\r\n")
+end
+
 return M

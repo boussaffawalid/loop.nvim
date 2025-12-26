@@ -2,6 +2,19 @@ local M = {}
 
 local filetools = require("loop.tools.file")
 
+---@param winid number?
+function M.get_window_text_width(winid)
+    if not winid or winid == 0 then winid = vim.api.nvim_get_current_win() end
+    local infos = vim.fn.getwininfo(winid)
+    if not infos or #infos == 0 then
+        return vim.o.columns - 3 -- fallback assumption
+    end
+    local info = infos[1]
+    -- info.width is total width, info.textoff is the combined width of
+    -- line numbers, sign columns, and fold columns.
+    return info.width - info.textoff
+end
+
 function M.is_regular_buffer(bufnr)
     if not vim.api.nvim_buf_is_valid(bufnr) then
         return false
@@ -166,7 +179,7 @@ end
 ---@param winid number
 ---@param text string
 function M.move_to_last_occurence(winid, text)
-    local bufnr = vim.api.nvim_win_get_buf(winid)    
+    local bufnr = vim.api.nvim_win_get_buf(winid)
     vim.api.nvim_win_set_cursor(winid, { vim.api.nvim_buf_line_count(bufnr), 0 })
     local line = vim.fn.search(text, 'bW') -- 'b' = backwards, 'W' = whole word
     if line > 0 then
