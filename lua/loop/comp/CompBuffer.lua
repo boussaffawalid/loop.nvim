@@ -117,17 +117,6 @@ end
 
 function CompBuffer:_on_buf_enter()
     self:_apply_keymaps()
-    if self._follow then
-        local last_line = vim.api.nvim_buf_line_count(self._buf)
-        vim.api.nvim_win_set_cursor(0, { last_line, 0 })
-    end
-end
-
-function CompBuffer:_on_buf_leave()
-    if self._follow then
-        local last_line = vim.api.nvim_buf_line_count(self._buf)
-        vim.api.nvim_win_set_cursor(0, { last_line, 0 })
-    end
 end
 
 ---@return string|nil
@@ -206,14 +195,6 @@ function CompBuffer:_setup_buf()
         callback = function(ev)
             assert(ev.buf == buf)
             self:_on_buf_enter()
-        end
-    })
-
-    vim.api.nvim_create_autocmd("BufLeave", {
-        buffer = buf,
-        callback = function(ev)
-            assert(ev.buf == buf)
-            self:_on_buf_leave()
         end
     })
 end
