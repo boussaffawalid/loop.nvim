@@ -1,31 +1,25 @@
 local M = {}
 
----@type string|nil
-local _ws_dir = nil
+---@class loop.ws.WorkspaceInfo
+---@field name string
+---@field root_dir string
+---@field config_dir string
 
----@type string
-local _config_dir = nil
 
----@param wsdir string|nil
-function M.set_ws_info(wsdir) 
-    _ws_dir = wsdir 
+---@type loop.ws.WorkspaceInfo?
+local _info = nil
+
+---@param info loop.ws.WorkspaceInfo?
+function M.set_ws_info(info)
+    _info = info
 end
 
 ---@return string|nil
-function M.get_ws_dir() return _ws_dir end
+function M.get_ws_dir() return _info and _info.root_dir or nil end
 
+---@return string
 function M.status_line_comp()
-	local wsinfo = require('loop.wsinfo')
-	local dir = wsinfo.get_ws_dir()
-	if dir and dir ~= "" then
-		-- Get the last part of the path (the folder name)
-		local name = vim.fn.fnamemodify(dir, ":p:h:t") -- Add a workspace icon if you have a Nerd Font installed
-		return "󱂬 " .. name
-	end
-	return ""
+    return (_info and _info.name) and ("󱂬 " .. _info.name) or ""
 end
-
-
-    
 
 return M

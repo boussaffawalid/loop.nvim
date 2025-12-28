@@ -18,8 +18,8 @@ local _init_err_msg = "init() not called"
 ---@type string?
 local _workspace_dir = nil
 
----@type loop.WorkspaceConfig?
-local _workspace_config = nil
+---@type loop.ws.WorkspaceInfo?
+local _workspace_info = nil
 
 local _save_timer = nil
 
@@ -44,18 +44,18 @@ local function _is_workspace_dir(dir)
 end
 
 local function _save_workspace()
-    if not _workspace_dir then
+    if not _workspace_dir or not _workspace_info then
         return false
     end
     assert(_init_done, _init_err_msg)
     local config_dir = _get_config_dir(_workspace_dir)
     window.save_settings(config_dir)
-    taskmgr.save_provider_states(config_dir)
+    taskmgr.save_provider_states(_workspace_info)
 end
 
 ---@param quiet? boolean
 local function _close_workspace(quiet)
-    if not _workspace_dir then
+    if not _workspace_dir or not _workspace_info then
         return false
     end
 
@@ -65,10 +65,11 @@ local function _close_workspace(quiet)
 
     persistence.close()
 
-    taskmgr.on_workspace_closed(_workspace_dir)
+    taskmgr.on_workspace_close(_workspace_info)
 
     if not quiet then notifications.notify("Workspace closed") end
     _workspace_dir = nil
+    _workspace_info = nil
     wsinfo.set_ws_info(nil)
 end
 
@@ -142,15 +143,22 @@ local function _load_workspace(dir, quiet)
     end
 
     _workspace_dir = dir
-    _workspace_config = ws_config
+    _workspace_info = {
+        name = ws_config.name,
+        root_dir = dir,
+        config_dir = config_dir,
+    }
+    if not _workspace_info.name or _workspace_info.name == "" then
+        _workspace_info.name = vim.fn.fnamemodify(dir, ":p:h:t")
+    end
 
-    wsinfo.set_ws_info(dir)
+    wsinfo.set_ws_info(vim.deepcopy(_workspace_info)) --copy for safety
 
     persistence.open(config_dir, ws_config.persistence)
 
     window.load_settings(config_dir)
 
-    taskmgr.on_workspace_open(dir, config_dir)
+    taskmgr.on_workspace_open(_workspace_info)
 
     if not _save_timer then
         -- Create and start the repeating timer

@@ -22,12 +22,18 @@ error('Cannot require a meta file')
 ---@alias loop.TaskExitHandler fun(success:boolean,reason:string|nil)
 
 ---@class loop.TaskProviderStore
----@field set_field fun(name:string,value:any)
----@field get_field fun(name:string):any
+---@field get fun(key:string):any
+---@field set fun(key:string, value:any)
+---@field keys fun():string[]
+
+---@class loop.Workspace
+---@field name string
+---@field root string
 
 ---@class loop.TaskProvider
----@field on_workspace_open? fun(ws_dir:string,config:loop.TaskProviderStore)
----@field on_workspace_closed? fun(ws_dir:string)
+---@field on_workspace_open? fun(ws:loop.Workspace, store:loop.TaskProviderStore)
+---@field on_workspace_close? fun(ws:loop.Workspace)
+---@field on_store_will_save? fun(ws:loop.Workspace, store:loop.TaskProviderStore)
 ---@field get_config_schema (fun():table)|nil
 ---@field get_config_template (fun():table)|nil
 ---@field get_task_schema fun():table

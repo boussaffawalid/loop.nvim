@@ -7,8 +7,8 @@ local providers = require("loop.task.providers")
 local selector = require("loop.tools.selector")
 local notifications = require("loop.notifications")
 
----@type table<string,table>
-local _provider_states = {}
+---@type table<string,{state:any,store:loop.TaskProviderStore}>
+local _provider_storage = {}
 
 ---@params task loop.Task
 ---@return string,string
@@ -136,46 +136,66 @@ function M.get_provider(name)
     return require(mod_name)
 end
 
----@param ws_dir string
----@param config_dir string
----@return loop.TaskProviderStore
-function M.on_workspace_open(ws_dir, config_dir)
+---@param wsinfo loop.ws.WorkspaceInfo
+function M.on_workspace_open(wsinfo)
+    ---@type loop.Workspace
+    local workspace = {
+        name = wsinfo.name,
+        root = wsinfo.root_dir,
+    }
     local names = providers.names()
     for _, name in ipairs(names) do
-        _provider_states[name] = nil
+        _provider_storage[name] = nil
         local provider = M.get_provider(name)
         if provider and provider.on_workspace_open then
-            local state = taskstore.load_provider_state(config_dir, name) or {}
-            _provider_states[name] = state
+            local state = taskstore.load_provider_state(wsinfo.config_dir, name) or {}
             ---@type loop.TaskProviderStore
             local store = {
-                set_field = function(fieldname, fieldvalue) state[fieldname] = fieldvalue end,
-                get_field = function(fieldname) return state[fieldname] end
+                set = function(fieldname, fieldvalue) state[fieldname] = fieldvalue end,
+                get = function(fieldname) return state[fieldname] end,
+                keys = function() return vim.tbl_keys(state) end
             }
-            provider.on_workspace_open(ws_dir, store)
+            _provider_storage[name] = { state = state, store = store }
+            provider.on_workspace_open(workspace, store)
         end
     end
 end
 
----@param ws_dir string
-function M.on_workspace_closed(ws_dir)
+---@param wsinfo loop.ws.WorkspaceInfo
+function M.on_workspace_close(wsinfo)
+    ---@type loop.Workspace
+    local workspace = {
+        name = wsinfo.name,
+        root = wsinfo.root_dir,
+    }
     local names = providers.names()
     for _, name in ipairs(names) do
-        _provider_states[name] = nil
+        _provider_storage[name] = nil
         local provider = M.get_provider(name)
-        if provider and provider.on_workspace_closed then
-            provider.on_workspace_closed(ws_dir)
+        if provider and provider.on_workspace_close then
+            provider.on_workspace_close(workspace)
         end
     end
 end
 
----@param config_dir string
-function M.save_provider_states(config_dir)
+---@param wsinfo loop.ws.WorkspaceInfo
+function M.save_provider_states(wsinfo)
+    ---@type loop.Workspace
+    local workspace = {
+        name = wsinfo.name,
+        root = wsinfo.root_dir,
+    }
     local names = providers.names()
     for _, name in ipairs(names) do
-        local state = _provider_states[name]
-        if state then
-            taskstore.save_provider_state(config_dir, name, state)
+        local provider = M.get_provider(name)
+        if provider then
+            local storage = _provider_storage[name]
+            if storage then
+                if provider.on_store_will_save then
+                    provider.on_store_will_save(workspace, storage.store)
+                end
+                taskstore.save_provider_state(wsinfo.config_dir, name, storage.state)
+            end
         end
     end
 end

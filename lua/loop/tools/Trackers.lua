@@ -32,24 +32,47 @@ function Trackers:add_tracker(callbacks)
 end
 
 ---Invoke a callback on each tracker if that callback exists
----@generic T
+---@param async boolean
 ---@param callback_name string
 ---@param ... any
-function Trackers:invoke(callback_name, ...)
+function Trackers:_invoke(async, callback_name, ...)
     local n = select("#", ...)
     local args = {}
     -- Manually copy each argument including nils
     for i = 1, n do
         args[i] = select(i, ...)
     end
-    vim.schedule(function()
+    if async then
+        vim.schedule(function()
+            for _, tracker in pairs(self._items) do
+                local fn = tracker[callback_name]
+                if fn then
+                    fn(unpack(args, 1, n))
+                end
+            end
+        end)
+    else
         for _, tracker in pairs(self._items) do
             local fn = tracker[callback_name]
             if fn then
                 fn(unpack(args, 1, n))
             end
         end
-    end)
+    end
+end
+
+---Invoke a callback on each tracker if that callback exists
+---@param callback_name string
+---@param ... any
+function Trackers:invoke(callback_name, ...)
+    self:_invoke(true, callback_name, ...)
+end
+
+---Invoke a callback on each tracker if that callback exists
+---@param callback_name string
+---@param ... any
+function Trackers:invoke_sync(callback_name, ...)
+    self:_invoke(false, callback_name, ...)
 end
 
 return Trackers
