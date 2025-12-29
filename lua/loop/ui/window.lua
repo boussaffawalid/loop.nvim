@@ -468,13 +468,6 @@ local function _create_term(page, args)
         end
     end
 
-    args_cpy.output_handler = function(stream, data)
-        if args.output_handler then
-            args.output_handler(stream, data)
-        end
-        page:request_change_notif()
-    end
-
     local prev_win = vim.api.nvim_get_current_win()
     local prev_buf = vim.api.nvim_win_get_buf(prev_win)
     local was_in_insert = vim.fn.mode():sub(1, 1) == 'i'
@@ -483,8 +476,26 @@ local function _create_term(page, args)
     end
 
     vim.api.nvim_set_current_win(_loop_win)
-
     local bufnr = page:get_or_create_buf()
+
+    local do_scroll = true
+    args_cpy.output_handler = function(stream, data)
+        if args.output_handler then
+            args.output_handler(stream, data)
+        end
+        page:request_change_notif()
+        if do_scroll and _loop_win > 0 then
+            local b = vim.api.nvim_win_get_buf(_loop_win)
+            if b == bufnr then -- if we have output, bufnr is still valid
+                if vim.api.nvim_get_current_win() == _loop_win then
+                    do_scroll = false
+                else
+                    local last = vim.api.nvim_buf_line_count(b)
+                    vim.api.nvim_win_set_cursor(_loop_win, { last, 0 })
+                end
+            end
+        end
+    end
 
     vim.wo[_loop_win].winfixbuf = false
     vim.api.nvim_win_set_buf(_loop_win, bufnr)
@@ -494,12 +505,10 @@ local function _create_term(page, args)
     local proc = TermProc:new()
     local proc_ok, proc_err = proc:start(args_cpy)
 
+    vim.keymap.set('t', '<Esc>', function() vim.cmd('stopinsert') end, { buffer = bufnr })
     -- trick to set the buffer to auto scroll
     vim.cmd.startinsert()
-    vim.cmd.stopinsert()
 
-    vim.keymap.set('t', '<Esc>', function() vim.cmd('stopinsert') end, { buffer = bufnr })
- 
     vim.api.nvim_set_current_win(prev_win)
     if prev_win ~= _loop_win then
         vim.api.nvim_set_current_buf(prev_buf)
@@ -509,7 +518,7 @@ local function _create_term(page, args)
         vim.wo[_loop_win].winfixbuf = true
     end
 
-    if was_in_insert then
+    if was_in_insert and prev_win ~= _loop_win then
         vim.cmd.startinsert()
     end
 
@@ -585,7 +594,7 @@ local function _add_tab_page(tab, opts)
         local ctrl = output_buf:make_controller()
         ---@type loop.PageData
         return { page = page:make_controller(), base_buf = ctrl, output_buf = ctrl }
-    end    
+    end
     if opts.type == "comp" then
         local comp_buf = CompBuffer:new(opts.buftype, opts.label)
         local page = Page:new(comp_buf)
