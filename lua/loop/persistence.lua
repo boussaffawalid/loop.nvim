@@ -41,6 +41,11 @@ function M.open(config_dir, flags)
 
     -- === ShaDa Support ===
     if flags.shada then
+        local shada_path = vim.fs.joinpath(config_dir, "main.shada")
+        vim.o.shadafile = shada_path
+        if filetools.file_exists(shada_path) then
+            vim.cmd("rshada!")
+        end
     end
 
     -- === Undo Support ===
@@ -65,9 +70,6 @@ function M.close()
 
     if vim.v.exiting ~= vim.NIL then
         return
-    end
-
-    if _state.flags.shada then
     end
 
     -- === Close Undo ===
