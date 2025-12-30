@@ -3,11 +3,9 @@ local M = {}
 local filetools = require('loop.tools.file')
 local uitools = require('loop.tools.uitools')
 
----@type {config_dir:string,flags:{shada:boolean, undo:boolean}} | nil
-local _state = nil
+---@alias loop.ws.PersistenceFlags {shada:boolean, undo:boolean}
 
----@type {shada:string?,shadafile:string|nil, undodir:string|nil, undofile:boolean|nil}?
-local _originals = nil
+local _open = false
 
 local function ensure_dir(path)
     if vim.fn.isdirectory(path) == 0 then
@@ -29,15 +27,15 @@ local function _refresh_buffers()
     end
 end
 
+---@param config_dir string
+---@param flags loop.ws.PersistenceFlags
 function M.open(config_dir, flags)
+    assert(not _open)
+    _open = true
+
     if not flags then return end
 
     ensure_dir(config_dir)
-
-    if _state then M.close() end
-
-    _state = { flags = flags, config_dir = config_dir }
-    _originals = {}
 
     -- === ShaDa Support ===
     if flags.shada then
@@ -51,9 +49,6 @@ function M.open(config_dir, flags)
 
     -- === Undo Support ===
     if flags.undo then
-        _originals.undodir = vim.o.undodir
-        _originals.undofile = vim.o.undofile
-
         local undo_dir = vim.fs.joinpath(config_dir, "undo")
         ensure_dir(undo_dir)
 
@@ -64,24 +59,6 @@ function M.open(config_dir, flags)
     if flags.shada or flags.undo then
         _refresh_buffers()
     end
-end
-
-function M.close()
-    assert(vim.v.exiting ~= vim.NIL, "can only save when vim is exiting")
-    if not _state or not _originals then return end
-
-    -- === Close Undo ===
-    if _state.flags.undo then
-        vim.opt.undodir = _originals.undodir
-        vim.opt.undofile = _originals.undofile
-    end
-
-    if _state.flags.shada or _state.flags.undo then
-        _refresh_buffers()
-    end
-
-    _state = nil
-    _originals = nil
 end
 
 return M

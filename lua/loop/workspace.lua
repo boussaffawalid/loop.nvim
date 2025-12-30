@@ -9,7 +9,7 @@ local uitools = require('loop.tools.uitools')
 local jsontools = require('loop.tools.json')
 local jsonschema = require('loop.tools.jsonschema')
 local filetools = require('loop.tools.file')
-local persistence = require('loop.persistence')
+local persistence = require('loop.ws.persistence')
 local wssaveutil = require('loop.ws.saveutil')
 
 local _init_done = false
@@ -61,8 +61,6 @@ local function _close_workspace(quiet)
     runner.terminate_tasks()
 
     _save_workspace()
-
-    persistence.close()
 
     taskmgr.on_workspace_close(_workspace_info)
 
@@ -201,12 +199,6 @@ function M.create_workspace(dir)
     local config_dir = _get_config_dir(dir)
     vim.fn.mkdir(config_dir, "p")
 
-    _load_workspace(dir)
-    if not _workspace_info then
-        notifications.notify("Failed to create workspace")
-        return
-    end
-
     if not _init_or_open_ws_config(config_dir) then
         notifications.notify("Failed to setup configuration file")
     end
@@ -259,32 +251,6 @@ function M.configure_workspace()
         notifications.notify("Workspace configuration error\n" .. table.concat(errors, '\n'))
     end
 end
-
---[[
-function M.save_session()
-    local session_path = vim.fs.joinpath(config_dir, "session.vim")
-
-    if filetools.file_exists(session_path) then
-        vim.cmd("silent! source " .. vim.fn.fnameescape(session_path))
-    end
-end
-
-function M.load_session()
-    -- === Save Session with completely safe options ===
-    if _state.flags.session then
-        local session_path = vim.fs.joinpath(_state.config_dir, "session.vim")
-
-        -- Temporarily set safe sessionoptions
-        local old_sessionoptions = vim.o.sessionoptions
-        vim.o.sessionoptions = SAFE_SESSIONOPTIONS
-
-        vim.cmd("mksession! " .. vim.fn.fnameescape(session_path))
-
-        -- Restore user's original sessionoptions
-        vim.o.sessionoptions = old_sessionoptions
-    end
-end
-]]
 
 ---@param args string[]
 ---@return string[]
@@ -425,7 +391,7 @@ end
 function M.save_workspace_buffers()
     local ws_info = _get_ws_info_or_warn()
     if not ws_info then return 0 end
-    wssaveutil.save_workspace_buffers()
+    wssaveutil.save_workspace_buffers(ws_info)
 end
 
 function M.winbar_click(id, clicks, button, mods)
