@@ -29,11 +29,6 @@ local schema = {
             },
             additionalProperties = false,
         },
-        variables = {
-            type = { "object", "null" },
-            additionalProperties = { type = "string" },
-            description = "Shared workspace variables",
-        },
     },
     additionalProperties = false,
 }
