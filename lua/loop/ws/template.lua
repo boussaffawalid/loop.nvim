@@ -8,5 +8,5 @@ return {
         exclude = { },
         follow_symlinks = false,
     },
-    variables = vim.empty_dict()
+    --variables = vim.empty_dict()
 }

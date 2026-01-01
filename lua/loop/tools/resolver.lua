@@ -70,11 +70,21 @@ local function parse_nested(str, start_pos)
     return nil, nil, "Unterminated macro"
 end
 
+local function async_call(fn, args)
+    local parent_co = coroutine.running()
+    vim.schedule(function()
+        coroutine.wrap(function()
+            local ok, ret1, ret2 = pcall(fn, unpack(args))
+            coroutine.resume(parent_co, ok, ret1, ret2)
+        end)()
+    end)
+    return coroutine.yield()
+end
+
 --- Recursive function to expand a string.
 ---@param str string
 ---@return string|nil result, string|nil err
 local function expand_recursive(str)
-
     local res = ""
     local i = 1
 
@@ -98,7 +108,7 @@ local function expand_recursive(str)
             -- 2. Extract Name and Multi-Args
             local macro_name, args_list = "", {}
             local colon_pos = expanded_inner:find(":")
-            
+
             if colon_pos then
                 macro_name = vim.trim(expanded_inner:sub(1, colon_pos - 1))
                 local raw_args = expanded_inner:sub(colon_pos + 1)
@@ -112,7 +122,7 @@ local function expand_recursive(str)
             local fn = config.current.macros[macro_name]
             if not fn then return nil, "Unknown macro: '" .. macro_name .. "'" end
 
-            local status, val, macro_err = pcall(fn, args_list)
+            local status, val, macro_err = async_call(fn, args_list)
             if not status then return nil, "Macro crashed: " .. tostring(val) end
             if val == nil then return nil, macro_err or "Macro failed" end
 
@@ -158,7 +168,7 @@ function M.resolve_macros(val, callback)
     coroutine.wrap(function()
         ---@type boolean, any, string|nil
         local success, result, err
-        
+
         if type(val) == "table" then
             -- Use deepcopy to ensure atomicity (don't ruin original table if a macro fails)
             local tbl = vim.deepcopy(val)

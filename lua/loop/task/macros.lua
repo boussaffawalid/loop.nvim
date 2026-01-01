@@ -100,22 +100,22 @@ end
 
 --- Async: Prompts user for input
 -- NOTE: Uses coroutine.yield/resume to handle the async UI call
-function M.prompt(text, default)
-    if not text then return nil, "prompt macro requires text" end
-    
+function M.prompt(prompt, default, completion)
+    if not prompt then return nil, "prompt macro requires prompt text" end
+
     local co = coroutine.running()
-    
-    -- Schedule the UI input
+
+    prompt = prompt .. ': '
     vim.schedule(function()
-        vim.ui.input({ prompt = text, default = default, completion = "file" }, function(input)
+        vim.ui.input({prompt = prompt, default = default, completion = completion }, function(input)
             -- Resume the coroutine with the user's input
             coroutine.resume(co, input)
         end)
     end)
-    
+
     -- Pause execution here until user presses Enter/Esc
     local result = coroutine.yield()
-    
+
     if not result then return nil, "Prompt cancelled" end
     return result
 end
