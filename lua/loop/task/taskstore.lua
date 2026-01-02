@@ -147,6 +147,42 @@ function M.load_tasks(config_dir, tasktype_to_schema)
     return tasks, nil
 end
 
+---@param config_dir string
+---@return table<string, string>|nil
+---@return string[]|nil
+function M.load_variables(config_dir)
+    local filepath = vim.fs.joinpath(config_dir, "variables.json")
+    
+    -- Missing file is not an error, return empty table
+    if not filetools.file_exists(filepath) then
+        return {}, nil
+    end
+
+    local loaded, contents_or_err = uitools.smart_read_file(filepath)
+    if not loaded then
+        return nil, { contents_or_err }
+    end
+
+    local decoded, data_or_err = jsontools.from_string(contents_or_err)
+    if not decoded or type(data_or_err) ~= 'table' then
+        return nil, { data_or_err or "Parsing error" }
+    end
+
+    local data = data_or_err
+    do
+        local schema = require("loop.task.variablesschema").base_schema
+        local errors = jsonschema.validate(schema, data)
+        if errors and #errors > 0 then
+            return nil, errors
+        end
+        if not data or not data.variables then
+            return nil, { "Parsing error: missing 'variables' field" }
+        end
+    end
+
+    return data.variables, nil
+end
+
 ---@param name string
 ---@param config_dir string
 function M.save_last_task_name(name, config_dir)

@@ -6,6 +6,7 @@ local taskstore = require("loop.task.taskstore")
 local providers = require("loop.task.providers")
 local selector = require("loop.tools.selector")
 local notifications = require("loop.notifications")
+local variables = require("loop.task.variables")
 
 ---@type table<string,{state:any,store:loop.TaskProviderStore}>
 local _provider_storage = {}
@@ -82,7 +83,17 @@ local function _load_tasks(config_dir)
     for _, tasktype in ipairs(M.task_types()) do
         tasktype_to_schema[tasktype] = _get_single_task_schema(tasktype)
     end
-    return taskstore.load_tasks(config_dir, tasktype_to_schema)
+    local tasks, errors = taskstore.load_tasks(config_dir, tasktype_to_schema)
+    
+    -- Load variables after loading tasks (errors are logged but don't block task loading)
+    local vars, var_errors = taskstore.load_variables(config_dir)
+    if var_errors then
+        notifications.notify(strtools.indent_errors(var_errors, "Warning: error(s) loading variables.json"), vim.log.levels.WARN)
+    else
+        variables.set_variables(config_dir, vars or {})
+    end
+    
+    return tasks, errors
 end
 
 ---@param config_dir string
