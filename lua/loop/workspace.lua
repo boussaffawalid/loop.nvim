@@ -373,6 +373,38 @@ function M.task_command(command, arg1, arg2)
     end
 end
 
+---@param args string[]
+---@return string[]
+function M.var_subcommands(args)
+    if #args == 0 then
+        return { "add", "configure" }
+    end
+    return {}
+end
+
+---@param command string|nil
+function M.var_command(command)
+    assert(_init_done, _init_err_msg)
+    local ws_info = _get_ws_info_or_warn()
+    if not ws_info then
+        return
+    end
+
+    command = command and command:match("^%s*(.-)%s*$") or ""
+    if command == "" then
+        command = "add"
+    end
+
+    local config_dir = ws_info.config_dir
+    if command == "add" then
+        taskmgr.add_variable(config_dir)
+    elseif command == "configure" then
+        taskmgr.configure_variables(config_dir)
+    else
+        notifications.notify('Invalid var command: ' .. command)
+    end
+end
+
 function M.page_subcommands(args)
     if #args == 0 then
         return { "switch", "open" }

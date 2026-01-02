@@ -6,6 +6,7 @@ local taskstore = require("loop.task.taskstore")
 local providers = require("loop.task.providers")
 local selector = require("loop.tools.selector")
 local notifications = require("loop.notifications")
+local variables = require("loop.task.variables")
 
 ---@type table<string,{state:any,store:loop.TaskProviderStore}>
 local _provider_storage = {}
@@ -82,7 +83,17 @@ local function _load_tasks(config_dir)
     for _, tasktype in ipairs(M.task_types()) do
         tasktype_to_schema[tasktype] = _get_single_task_schema(tasktype)
     end
-    return taskstore.load_tasks(config_dir, tasktype_to_schema)
+    local tasks, errors = taskstore.load_tasks(config_dir, tasktype_to_schema)
+    
+    -- Load variables after loading tasks (errors are logged but don't block task loading)
+    local vars, var_errors = taskstore.load_variables(config_dir)
+    if var_errors then
+        notifications.notify(strtools.indent_errors(var_errors, "Warning: error(s) loading variables.json"), vim.log.levels.WARN)
+    else
+        variables.set_variables(config_dir, vars or {})
+    end
+    
+    return tasks, errors
 end
 
 ---@param config_dir string
@@ -263,6 +274,40 @@ function M.configure(config_dir, task_type)
             taskstore.open_provider_config(config_dir, task_type, schema, template)
         end
     end
+end
+
+---@param config_dir string
+function M.add_variable(config_dir)
+    -- Prompt for variable name
+    vim.ui.input({ prompt = "Variable name: " }, function(var_name)
+        if not var_name or var_name == "" then
+            return
+        end
+
+        -- Validate variable name pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+        if not var_name:match("^[A-Za-z_][A-Za-z0-9_]*$") then
+            notifications.notify("Invalid variable name. Must match pattern: ^[A-Za-z_][A-Za-z0-9_]*$", vim.log.levels.ERROR)
+            return
+        end
+
+        -- Prompt for variable value
+        vim.ui.input({ prompt = "Variable value: " }, function(var_value)
+            if not var_value then
+                return
+            end
+
+            local schema = require("loop.task.variablesschema").base_schema
+            local ok, errors = taskstore.add_variable(config_dir, var_name, var_value, schema)
+            if not ok then
+                notifications.notify(strtools.indent_errors(errors, "Failed to add variable"), vim.log.levels.ERROR)
+            end
+        end)
+    end)
+end
+
+---@param config_dir string
+function M.configure_variables(config_dir)
+    taskstore.open_variables_config(config_dir)
 end
 
 ---@class loop.SelectTaskArgs

@@ -4,6 +4,7 @@ local uitools = require('loop.tools.uitools')
 local wsinfo = require("loop.wsinfo")
 local systools = require("loop.tools.systools")
 local selector = require("loop.tools.selector")
+local variables = require("loop.task.variables")
 
 local _nofile_error = "Current buffer is not a regular saved file"
 local _badtype_error = "Current file type is not %s"
@@ -124,6 +125,24 @@ function M.env(varname)
     if not varname then return nil, "env macro requires variable name" end
     local value = vim.fn.getenv(varname)
     return (value ~= vim.NIL and value) or nil
+end
+
+--- Looks up a custom variable and returns its literal value (no macro expansion)
+function M.var(varname)
+    if not varname then return nil, "var macro requires variable name" end
+
+    local config_dir = wsinfo.get_ws_dir()
+    if not config_dir then
+        return nil, "No active workspace"
+    end
+
+    local raw_value = variables.get_variable(config_dir, varname)
+    if not raw_value then
+        return nil, "Variable not found: " .. varname
+    end
+
+    -- Return the literal value without expansion
+    return raw_value
 end
 
 --- Async: Process selector

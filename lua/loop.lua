@@ -93,6 +93,8 @@ function M.complete(arg_lead, cmd_line)
             return filter(workspace.workspace_subcommands(rest))
         elseif cmd == "page" then
             return filter(workspace.page_subcommands(rest))
+        elseif cmd == "var" then
+            return filter(workspace.var_subcommands(rest))
         end
     end
 
@@ -147,6 +149,14 @@ function M.select_command()
     for _, name in ipairs(workspace.configurable_task_types()) do
         table.insert(all_cmds, { vimcmd = "Loop task configure " .. name, help = "Configure " .. name .. " tasks module" })
     end
+
+    ------------------------------------------------------------------
+    -- Var subcommands
+    ------------------------------------------------------------------
+    table.insert(all_cmds,
+        { vimcmd = "Loop var add", help = "Create a new variable" })
+    table.insert(all_cmds,
+        { vimcmd = "Loop var configure", help = "Configure variables or check the current configuration" })
 
     require("loop.tools.cmdmenu").select_and_run_command(all_cmds)
 end
@@ -210,6 +220,7 @@ function M.init()
         page = workspace.page_command,
         workspace = workspace.workspace_cmmand,
         task = workspace.task_command,
+        var = workspace.var_command,
     }
 end
 
