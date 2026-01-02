@@ -315,6 +315,11 @@ function M.task_subcommands(args)
     return {}
 end
 
+---@return string[]
+function M.configurable_task_types()
+    return taskmgr.configurable_task_types()
+end
+
 ---@param command string|nil
 ---@param arg1 string
 ---@param arg2? string|nil

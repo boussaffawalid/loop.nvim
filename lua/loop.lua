@@ -105,13 +105,13 @@ function M.select_command()
         { vimcmd = "Loop workspace info",      help = "Show information about the current workspace" },
         { vimcmd = "Loop workspace create",    help = "Create a new workspace in the current working directory" },
         { vimcmd = "Loop workspace open",      help = "Open the workspace in the current working directory" },
-        { vimcmd = "Loop workspace configure", help = "Create/Open the workspace configuration file" },
         { vimcmd = "Loop workspace save",      help = "Save workspace buffers (as defined in the workspace configuration)" },
+        { vimcmd = "Loop workspace configure", help = "Create/Open the workspace configuration file" },
         { vimcmd = "Loop toggle",              help = "Toggle Loop window" },
         { vimcmd = "Loop show",                help = "Show Loop window" },
         { vimcmd = "Loop hide",                help = "Hide Loop window" },
-        { vimcmd = "Loop page",                help = "Switch page" },
-        { vimcmd = "Loop page open",           help = "Open a page" },
+        { vimcmd = "Loop page",                help = "Select the page shown in the Loop window" },
+        { vimcmd = "Loop page open",           help = "Select and open a page in the current window" },
     }
 
     ------------------------------------------------------------------
@@ -130,7 +130,6 @@ function M.select_command()
     local other_task_cmds = {
         { "run",       "Run task" },
         { "repeat",    "Repeat last task" },
-        { "configure", "Configure tasks or check the current configuration" },
         { "terminate", "Terminate running tasks" },
     }
 
@@ -139,6 +138,12 @@ function M.select_command()
             vimcmd = "Loop task " .. cmd[1],
             help = cmd[2],
         })
+    end
+
+    table.insert(all_cmds,
+        { vimcmd = "Loop task configure", help = "Configure tasks or check the current configuration" })
+    for _, name in ipairs(workspace.configurable_task_types()) do
+        table.insert(all_cmds, { vimcmd = "Loop task configure " .. name, help = "Configure " .. name .. " tasks module" })
     end
 
     require("loop.tools.cmdmenu").select_and_run_command(all_cmds)
