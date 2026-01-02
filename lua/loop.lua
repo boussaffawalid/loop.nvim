@@ -30,7 +30,7 @@ local DEFAULT_CONFIG = {
     },
     macros = require("loop.task.macros"),
     debug = false,
-    autosave_interval = 5 * 60 * 1000, -- 5 minutes in milliseconds
+    autosave_interval = 5, -- 5 minutes
 }
 
 -----------------------------------------------------------

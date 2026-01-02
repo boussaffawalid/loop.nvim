@@ -188,7 +188,7 @@ local function _load_workspace(dir, quiet)
     taskmgr.on_workspace_open(_workspace_info)
 
     local config = require('loop.config')
-    local save_interval = config.current.autosave_interval or (5 * 60 * 1000)
+    local save_interval = (config.current.autosave_interval or 5) * 60 * 1000
     
     if save_interval > 0 and not _save_timer then
         -- Create and start the repeating timer

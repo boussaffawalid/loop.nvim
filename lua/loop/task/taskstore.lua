@@ -12,6 +12,9 @@ local resolver = require('loop.tools.resolver')
 ---@return loop.Task[]|nil
 ---@return string[]|nil
 local function _load_tasks_from_str(content, tasktype_to_schema)
+    if content == "" then
+        return {}, nil
+    end
     local loaded, data_or_err = jsontools.from_string(content)
     if not loaded or type(data_or_err) ~= 'table' then
         return nil, { data_or_err }
